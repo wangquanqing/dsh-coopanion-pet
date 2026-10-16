@@ -23,36 +23,40 @@ Coopanion 全部功能按「移植到 DSH Web UI 插件」的难度分级。每�
 
 ---
 
-## P1 🟢 纯表现层（接着做，性价比最高）
+## P1 ✅ 表现层（已完成）
 
-这些都是自包含的前端逻辑，不依赖 DSH 任何服务，搬过来就能用。
+自包含的前端逻辑，不依赖 DSH 任何服务。
 
-| 功能 | 依赖 | 来源 | 说明 |
-| --- | --- | --- | --- |
-| **气泡说话 + 打字机效果** | 无 | `web/pet-app.js` 的 `say()` | 头顶气泡逐字显示，支持表情/动作标记 `<…>`、`【…】` |
-| **表情与动作词表** | 无 | `web/kit/body.js` 的 `KIT_EXPRESSIONS`/`KIT_MOTIONS` | 27 种表情、19 个动作词，直接可调 |
-| **提问气泡（带选项）** | 无 | `web/pet-app.js` 的 `ask()` | 最多 3 个选项 + 自填框，回答以事件返回 |
-| **声音** | 无 | `web/sound.js`（183 行，WebAudio 合成） | 无音频素材，全部合成，零体积 |
-| **悬停按钮 + 右键菜单** | 无 | `web/pet-app.js` | 她身边的操作按钮 |
-| **状态气泡** | 无 | `web/pet-app.js` 的 `stepStatus()` | 表达「正在思考 / 正在读 / 正在写」 |
-| **装扮页** | 无 | `web/dress.js`（26KB）、`dress.css` | 换色、换装、调体型 |
-| **多套配色方案** | 需补素材 | `web/whale/model.json` 的 `schemes` | 已内置 deepseek 一套；其余 7 套（harness/chatgpt/claude/gemini/qwen/kimi/minimax）每套约 1.4MB，按需加 |
-| **冬装（cape）** | 无 | `web/whale/outfits/cape/` | 素材已在包内，只差 UI 入口 |
-| **i18n** | 无 | `web/i18n.js`、`web/whale/figure.json` | 形象包已带 11 语言名称 |
+| 功能 | 来源 | 状态 |
+| --- | --- | --- |
+| **气泡说话 + 打字机效果** | `web/pet-app.js` 的 say 分支 | ✅ `assets/bubble.js` |
+| **表情与动作标记** | `web/kit/body.js` 词表 + `pet-app.js` 的 anchors | ✅ `【…】` 与 `<…>` |
+| **提问气泡（带选项）** | `web/pet-app.js` 的 ask 分支 | ✅ 3 选项 + 自填框 + `1`–`3` 键 |
+| **声音** | `web/sound.js` | ✅ `assets/sfx.js`，全部 WebAudio 合成，零素材 |
+| **悬停按钮与右键菜单** | 上游由 World 协议驱动 | ✅ `assets/ui.js`，本插件新写 |
+| **气泡样式与主题对接** | `web/pet.css` 气泡段落 | ✅ `assets/bubble.css.js`，接 DSH 主题令牌 |
 
-**建议顺序**：气泡说话 → 表情动作 → 提问气泡 → 声音 → 状态气泡 → 装扮页。
+**从 P1 挪到后面的**：
+
+| 功能 | 为什么往后放 |
+| --- | --- |
+| 状态气泡（「正在思考 / 正在读」） | 数据源是 DSH 的会话状态，属于 P2 |
+| 装扮页 | 上游是独立页面（`dress.html`），需要自己的路由与 UI，工作量接近独立功能 |
+| 其余 7 套配色方案 | 素材每套约 1.4MB，按需再加；当前内置 deepseek 一套 |
+| 冬装（cape） | 素材已在包内，缺 UI 入口；可与装扮页一起做 |
+| i18n | 形象名已带 11 语言；界面文案目前只有中文 |
 
 ---
 
-## P2 🟡 接入 DSH（这一步才让它「属于 DSH」）
+## P2 🟡 接入 DSH（下一步）
 
 | 功能 | 依赖 | 做法 |
 | --- | --- | --- |
-| **桌宠响应会话状态** | `slots` / 会话事件 | 监听 DSH 的会话与工具事件，把「正在思考 / 调用工具 / 完成」映射成她的表情与状态气泡。DSH 侧可用 `ctx.on(...)` 订阅会话事件，或从 `conversation.*` 插槽拿状态 |
-| **注册 `pet_*` 工具** | cordis `tools` 服务 | Coopanion 的 6 个工具（`pet_say`/`pet_ask`/`pet_walk_to`/`pet_set`/`pet_quiet`/`pet_act`）实现只依赖「发消息给桌宠」与「等回答」，handler 在 `src/world.ts` 里可基本原样搬。桌面端由 Agent 调用她说话/走路/做动作 |
-| **设置面板** | `slots.register('settings.section')` | 把 P1 的偏好从 `localStorage` 提到 DSH 设置页。可参考 `dsh-whale-musume` 的 `settings.mascot.item` 做法 |
+| **注册 `pet_*` 工具** | cordis `tools` 服务 | 让 Agent 能指挥她说、问、走、做动作。Coopanion 的 6 个工具 handler 在 `src/world.ts` 里可基本原样搬；本插件的 `window.__dshCoopanionPet` 已经是现成的调用面 |
+| **桌宠响应会话状态** | 会话事件 + `slots` | 把「正在思考 / 调用工具 / 完成」映射成她的表情与状态气泡 |
+| **设置面板** | `slots.register('settings.section')` | 把偏好从 `localStorage` 提到 DSH 设置页，替换当前只能右键改的状态 |
 | **环境提示词注入** | `dsh-system-prompt` 段 | 让模型知道桌宠存在与可用工具，来源 `src/ENV_PROMPT.md`（49 行） |
-| **宿主↔浏览器实时通道** | `webServer.registerUpgrade` | 要让 Agent 主动驱动桌宠（而不只是前端轮询），需要一条 WS 或 SSE。DSH 的 `webServer` 提供 `registerUpgrade`（HTTP upgrade 路由），可用 |
+| **宿主↔浏览器实时通道** | `webServer.registerUpgrade` | Agent 要主动驱动桌宠需要一条 WS 或 SSE；DSH 的 `webServer` 提供 `registerUpgrade` |
 
 **关键说明**：P2 的「注册工具」是让桌宠从「装饰」变成「能陪你干活的角色」的分水岭。
 Coopanion 原有的通信是 `ws://127.0.0.1:7797/socket?role=pet`，帧格式为带 `t` 字段的 JSON

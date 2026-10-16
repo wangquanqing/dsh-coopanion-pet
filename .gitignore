@@ -1,0 +1,19 @@
+# 依赖
+node_modules/
+.pnpm-store/
+
+# 编辑器与系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 日志与临时文件
+*.log
+*.tmp
+*.bak
+.cache/
+
+# 验证产物（端到端测试的截图与脚本不随包发布）
+*.shot.png

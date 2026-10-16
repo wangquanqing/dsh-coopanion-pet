@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Coopanion 桌宠">
+  <defs>
+    <linearGradient id="hair" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7aa7ff"/>
+      <stop offset="1" stop-color="#4d6bfe"/>
+    </linearGradient>
+  </defs>
+  <!-- 呆毛 -->
+  <path d="M32 9c2.4 0 3.6 1.8 3 3.6-.5 1.5-1.9 2.2-1.6 3.8" fill="none" stroke="#4d6bfe" stroke-width="2.4" stroke-linecap="round"/>
+  <!-- 双鳍 -->
+  <path d="M14 30c-3.4-.6-5.6 1.2-6 3.6 2.6.4 5-.6 6.6-2.2z" fill="#4d6bfe"/>
+  <path d="M50 30c3.4-.6 5.6 1.2 6 3.6-2.6.4-5-.6-6.6-2.2z" fill="#4d6bfe"/>
+  <!-- 头发 -->
+  <path d="M32 12c10.5 0 17 7.4 17 17.5 0 5.2-1.2 9.4-3 12.6-1.4 2.5-1 5 .8 6.8-3.4-.4-6.2-2.4-8-5.4-2 1-4.4 1.5-6.8 1.5s-4.8-.5-6.8-1.5c-1.8 3-4.6 5-8 5.4 1.8-1.8 2.2-4.3.8-6.8-1.8-3.2-3-7.4-3-12.6C15 19.4 21.5 12 32 12z" fill="url(#hair)"/>
+  <!-- 脸 -->
+  <path d="M32 20.5c6.2 0 11 4.8 11 11.2 0 6.6-4.8 11.6-11 11.6s-11-5-11-11.6c0-6.4 4.8-11.2 11-11.2z" fill="#fdf3ee"/>
+  <!-- 刘海 -->
+  <path d="M21.5 24.5c1.6-4.4 5.6-7 10.5-7s8.9 2.6 10.5 7c-2.6-2-6-3-10.5-3s-7.9 1-10.5 3z" fill="#4d6bfe"/>
+  <!-- 眼睛 -->
+  <ellipse cx="27.2" cy="32.6" rx="2.5" ry="3.1" fill="#1b1626"/>
+  <ellipse cx="36.8" cy="32.6" rx="2.5" ry="3.1" fill="#1b1626"/>
+  <circle cx="28.1" cy="31.5" r="0.95" fill="#fff"/>
+  <circle cx="37.7" cy="31.5" r="0.95" fill="#fff"/>
+  <!-- 腮红 -->
+  <ellipse cx="23.6" cy="36.6" rx="2.2" ry="1.3" fill="#ffb3bd" opacity=".75"/>
+  <ellipse cx="40.4" cy="36.6" rx="2.2" ry="1.3" fill="#ffb3bd" opacity=".75"/>
+  <!-- 嘴 -->
+  <path d="M30.4 38.4c.9.9 2.3.9 3.2 0" fill="none" stroke="#1b1626" stroke-width="1.3" stroke-linecap="round"/>
+</svg>

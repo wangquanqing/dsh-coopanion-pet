@@ -1,0 +1,43 @@
+{
+  "name": "coopanion-dsh-pet",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Coopanion 桌宠 for DeepSeek Harness：把 Coopanion 的桌面宠物（DeepSeek 鲸鱼娘）搬进 DSH Web UI 与桌面端",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "icon": "./icon.svg",
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "assets",
+    "locale",
+    "icon.svg",
+    "README.md",
+    "ROADMAP.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-layout"
+      ]
+    }
+  },
+  "meta": {
+    "title": "Coopanion 桌宠",
+    "description": "住在界面下沿的桌宠：气泡说话、表情动作、走路，可拖动。形象取自 Coopanion。"
+  },
+  "license": "AGPL-3.0-or-later"
+}

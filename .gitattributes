@@ -1,0 +1,11 @@
+# 与上游 Coopanion 保持一致：源码统一 LF，避免跨平台行尾漂移。
+* text=auto eol=lf
+
+# 二进制素材不做行尾转换
+*.png binary
+*.webp binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.woff binary
+*.woff2 binary

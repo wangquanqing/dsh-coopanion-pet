@@ -1,5 +1,5 @@
 /**
- * coopanion-dsh-pet —— 客户端半边：把 Coopanion 的桌宠画进 DSH 界面的覆盖层。
+ * dsh-coopanion-pet —— 客户端半边：把 Coopanion 的桌宠画进 DSH 界面的覆盖层。
  *
  * 桌宠本体是 Coopanion 的渲染内核（assets/kit：Live2D 式 WebGL sprite rig）加鲸鱼娘形象包
  * （assets/whale：25 张身体部件纹理 + 25 张表情贴图 + model.json）。这些都是自包含的 ES 模块
@@ -21,20 +21,20 @@
  * 资源路径 BASE 必须与 index.js 的 ROUTE 一致。
  */
 window.__ModuleLoader__.load({
-  id: 'coopanion-dsh-pet',
+  id: 'dsh-coopanion-pet',
   factory: (require) => {
     const React = require('react');
 
     /** 资源路径，与 index.js 的 ROUTE 保持一致。 */
-    const ASSETS = '/api/coopanion-dsh-pet/assets/';
+    const ASSETS = '/api/dsh-coopanion-pet/assets/';
     /**
      * 形象包用 `new URL(相对路径, base)` 解析纹理，base 必须是绝对 URL，
      * 因此按 location 展开一次，而不是直接把路径传进去。
      */
     const ABS = new URL(ASSETS, location.href).href;
 
-    const STYLE_ATTR = 'data-coopanion-dsh-pet';
-    const PREFS_KEY = 'coopanion-dsh-pet:prefs';
+    const STYLE_ATTR = 'data-dsh-coopanion-pet';
+    const PREFS_KEY = 'dsh-coopanion-pet:prefs';
     /** 站立地面与窗口底边的距离。 */
     const FLOOR_GAP = 8;
 
@@ -104,7 +104,7 @@ window.__ModuleLoader__.load({
           body.step(dt);
           hits = body.layout()?.hit ?? [];
         } catch (error) {
-          console.warn('[coopanion-dsh-pet] 帧绘制失败，桌宠已停止：', error);
+          console.warn('[dsh-coopanion-pet] 帧绘制失败，桌宠已停止：', error);
           stopped = true;
           return;
         }
@@ -187,7 +187,7 @@ window.__ModuleLoader__.load({
           try {
             body.dispose();
           } catch (error) {
-            console.warn('[coopanion-dsh-pet] 释放渲染资源失败：', error);
+            console.warn('[dsh-coopanion-pet] 释放渲染资源失败：', error);
           }
           root.remove();
         },
@@ -214,7 +214,7 @@ window.__ModuleLoader__.load({
           pet = made;
           host.appendChild(made.root);
         }, (error) => {
-          console.warn('[coopanion-dsh-pet] 桌宠加载失败，本页不显示：', error);
+          console.warn('[dsh-coopanion-pet] 桌宠加载失败，本页不显示：', error);
         });
 
         return () => {
@@ -235,7 +235,7 @@ window.__ModuleLoader__.load({
           el.textContent = CSS;
           document.head.appendChild(el);
           return () => el.remove();
-        }, 'coopanion-dsh-pet: 样式');
+        }, 'dsh-coopanion-pet: 样式');
 
         ctx.slots.inject('shell.overlay', () => ctx.slots.register(
           { name: 'shell.overlay', id: 'coopanion-pet', order: 10 },

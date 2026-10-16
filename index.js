@@ -1,4 +1,4 @@
-// coopanion-dsh-pet —— Coopanion 桌宠插件（宿主半边，零侵入）。
+// dsh-coopanion-pet —— Coopanion 桌宠插件（宿主半边，零侵入）。
 //
 // 只做一件事：把包内 assets 目录以只读静态路由提供给浏览器
 // （kit/ 渲染内核、whale/ 形象与纹理 PNG），供 client.js 在页面里加载桌宠。
@@ -12,13 +12,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** Cordis 插件名（loader 诊断用）。 */
-export const name = 'coopanion-dsh-pet';
+export const name = 'dsh-coopanion-pet';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ASSETS_DIR = path.join(HERE, 'assets');
 
 /** 路由前缀；client.js 里的 BASE 必须与此保持一致（含结尾斜杠）。 */
-export const ROUTE = '/api/coopanion-dsh-pet/assets';
+export const ROUTE = '/api/dsh-coopanion-pet/assets';
 
 const MIME = {
   '.css': 'text/css; charset=utf-8',
@@ -67,8 +67,8 @@ export async function apply(ctx) {
         }
       },
     });
-    wctx.effect(() => dispose, 'coopanion-dsh-pet: 静态资源路由');
+    wctx.effect(() => dispose, 'dsh-coopanion-pet: 静态资源路由');
   });
 
-  ctx.logger?.info?.(`coopanion-dsh-pet: 已挂载（资源路由 ${ROUTE}/）`);
+  ctx.logger?.info?.(`dsh-coopanion-pet: 已挂载（资源路由 ${ROUTE}/）`);
 }

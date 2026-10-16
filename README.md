@@ -21,13 +21,13 @@ dsh plugin --profile <你的profile> add "file:<本目录的绝对路径>"
 例如：
 
 ```powershell
-dsh plugin --profile web add "file:D:\path\to\coopanion-dsh-pet"
+dsh plugin --profile web add "file:D:\path\to\dsh-coopanion-pet"
 ```
 
 装完**重启宿主**（浏览器刷新不够，客户端模块需要重新装配）。桌面端由 Electron 独占管理其 profile，
 请在桌面端的插件管理界面安装，不要直接对 `desktop` profile 执行上面的命令。
 
-卸载：`dsh plugin --profile <profile> remove coopanion-dsh-pet`。
+卸载：`dsh plugin --profile <profile> remove dsh-coopanion-pet`。
 
 ## 它做了什么
 
@@ -35,7 +35,7 @@ dsh plugin --profile web add "file:D:\path\to\coopanion-dsh-pet"
 
 | 半边 | 文件 | 职责 |
 | --- | --- | --- |
-| 宿主 | `index.js` | 注册只读静态路由 `/api/coopanion-dsh-pet/assets/`，把包内 `assets/` 供给浏览器 |
+| 宿主 | `index.js` | 注册只读静态路由 `/api/dsh-coopanion-pet/assets/`，把包内 `assets/` 供给浏览器 |
 | 客户端 | `client.js` | 向 `shell.overlay` 插槽注册桌宠组件，在覆盖层里跑 WebGL 渲染循环 |
 
 路由用 `prefix` 而非 `exact`，因为形象包内部有相对路径导入（`whale/figure.js` → `../kit/rig.js`、
@@ -97,7 +97,7 @@ assets/
 
 ## 配置
 
-偏好写在 `localStorage` 的 `coopanion-dsh-pet:prefs`（JSON），刷新后生效：
+偏好写在 `localStorage` 的 `dsh-coopanion-pet:prefs`（JSON），刷新后生效：
 
 ```json
 { "enabled": true, "scale": 0.38, "roam": "calm", "startShare": 0.78 }

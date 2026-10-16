@@ -1,9 +1,9 @@
 # Coopanion 桌宠 bundle patch —— 把桌宠叠加到 profile 组合上（零侵入）。
 # 单包双面（dsh.bundle + dsh.client）：
-#   · 宿主插件（worker 侧）：注册 /api/coopanion-dsh-pet/assets 只读静态资源路由，
+#   · 宿主插件（worker 侧）：注册 /api/dsh-coopanion-pet/assets 只读静态资源路由，
 #     把包内 assets（kit 渲染内核 / whale 形象 / 纹理 PNG / model.json）供给浏览器；
 #   · 浏览器插件（dsh.client）：向 shell.overlay 插槽注册桌宠组件，
 #     在覆盖层里跑 canvas sprite rig，全部资源本地加载，无外部请求、无遥测。
 - insert:
-    - id: coopanion-dsh-pet
-      name: coopanion-dsh-pet
+    - id: dsh-coopanion-pet
+      name: dsh-coopanion-pet

@@ -426,6 +426,13 @@ window.__ModuleLoader__.load({
       const HIDE_GRACE = 700;
       let showUntil = 0;
 
+      /** 光标是否停在她身上，或停在她自己的按钮条上。 */
+      let hovering = false;
+      /** 是否正在拖她。帧循环用它判断活动状态以决定帧率。 */
+      let dragging = false;
+      /** 最近一次指针位置，帧循环用它判断按钮条该不该出现。 */
+      const lastPointer = { x: -1e4, y: -1e4 };
+
       const wantsTools = () => {
         if (!layout) return false;
         if (['drag', 'air'].includes(layout.mode) || tools.menuOpen) return false;
@@ -438,8 +445,25 @@ window.__ModuleLoader__.load({
         return now < showUntil;
       };
 
+      /**
+       * 帧率：活动时跟随屏幕刷新（不必更密），静止时降到 24fps。
+       *
+       * 她静止时的动画（呼吸、眨眼、头发弹簧）慢，24fps 看不出差别，
+       * 但省下大半的 CPU。`moving` 由布局的 mode 与指针状态决定。
+       * 标签页不可见时浏览器本来就不发 rAF，不必自己处理。
+       */
+      const RESTING_FPS = 24;
+      /** 本帧之后隔多久再画下一帧；0 表示跟着刷新率画。 */
+      let dueAt = 0;
+      let gapMs = 0;
+
       const frame = (now) => {
         if (stopped) return;
+        // 还没到下一帧的时间就先跳过，但必须继续请求，否则循环会断
+        if (now < dueAt - gapMs / 4) {
+          raf = requestAnimationFrame(frame);
+          return;
+        }
         // 标签页切回或系统休眠后 dt 会很大，cap 掉，免得她一帧冲过整个屏幕。
         const dt = Math.min(0.05, (now - last) / 1000);
         last = now;
@@ -469,6 +493,14 @@ window.__ModuleLoader__.load({
           stopped = true;
           return;
         }
+
+        // 她在走动、被拖动、说话或做事时跟随刷新率；静下来就降帧。
+        // `moving` 由内核给出（走路、跳跃、拖拽等），对话与状态气泡也算活动。
+        const active = !!(layout?.moving || bubble.busy || status.active || dragging);
+        gapMs = active ? 0 : 1000 / RESTING_FPS;
+        // 落后超过一个间隔就重新对齐，避免补画一串迟到的帧
+        dueAt = now - dueAt > gapMs ? now + gapMs : dueAt + gapMs;
+
         raf = requestAnimationFrame(frame);
       };
       raf = requestAnimationFrame(frame);
@@ -604,11 +636,6 @@ window.__ModuleLoader__.load({
       const onPet = (x, y) => hits.some((c) => Math.hypot(x - c.x, y - c.y) < c.r);
       const point = (event) => ({ x: event.clientX, y: event.clientY, t: event.timeStamp });
 
-      /** 光标是否停在她身上，或停在她自己的按钮条上。 */
-      let hovering = false;
-      let dragging = false;
-      /** 最近一次指针位置，帧循环用它判断按钮条该不该出现。 */
-      const lastPointer = { x: -1e4, y: -1e4 };
       /** 光标形状是否由本插件设置：避免清掉界面自己设的值。 */
       let cursorOwned = false;
       const setCursor = (value) => {

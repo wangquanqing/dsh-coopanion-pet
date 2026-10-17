@@ -68,6 +68,42 @@ const TOOL_WORDS = [
   [/^todo_write$|^create_goal|^update_goal|^get_goal/, 'write'],
   [/^ask_user_question$/, 'wait'],
 ];
+
+/**
+ * 从工具参数里挑出「在做什么」的具体对象，显示在她的状态气泡里。
+ *
+ * DSH 的 `tools/execute` 给的是**已经解析好的对象**，因此不必像上游那样
+ * 从流式 JSON 里抠字段——直接读就行。
+ *
+ * 只要一个短标签：文件取 basename，命令取首行并压掉多余空白。
+ */
+const TOOL_TARGETS = [
+  ['file_path', 'file'],
+  ['path', 'file'],
+  ['pattern', 'text'],
+  ['glob', 'text'],
+  ['command', 'text'],
+  ['description', 'text'],
+  ['query', 'text'],
+  ['url', 'text'],
+];
+
+/** 一个参数值 → 可显示的短标签。 */
+function targetOf(args) {
+  if (!args || typeof args !== 'object') return null;
+  for (const [key, kind] of TOOL_TARGETS) {
+    const raw = args[key];
+    if (typeof raw !== 'string' || !raw.trim()) continue;
+    const text = raw.trim().replace(/\s+/g, ' ');
+    if (kind === 'file') {
+      // 只留文件名：完整路径在气泡里太长，也把用户目录摊开在屏幕上
+      const base = text.split(/[\\/]/).filter(Boolean).pop() ?? text;
+      return base.slice(0, 32);
+    }
+    return text.slice(0, 40);
+  }
+  return null;
+}
 /** 工具类状态最多停留多久（毫秒），免得一个卡住的调用把气泡钉死。 */
 const TOOL_TTL_MS = 120_000;
 
@@ -95,9 +131,13 @@ function createStatusTracker() {
 
   const snapshot = () => {
     const st = current();
-    return st ? { kind: st.kind, tool: st.tool, since: st.since } : { kind: 'none' };
+    if (!st) return { kind: 'none' };
+    // target 只在有值时下发，省得每帧带一堆 null
+    return st.target
+      ? { kind: st.kind, tool: st.tool, target: st.target, since: st.since }
+      : { kind: st.kind, tool: st.tool, since: st.since };
   };
-  const think = (now) => ({ kind: 'think', tool: null, since: now });
+  const think = (now) => ({ kind: 'think', tool: null, target: null, since: now });
 
   return {
     snapshot,
@@ -112,11 +152,12 @@ function createStatusTracker() {
       }
       return snapshot();
     },
-    toolStart(agent, toolName) {
+    toolStart(agent, toolName, args) {
       const key = String(agent);
       running.set(key, (running.get(key) ?? 0) + 1);
       const kind = TOOL_WORDS.find(([re]) => re.test(toolName))?.[1] ?? 'work';
-      byAgent.set(key, { kind, tool: toolName, since: Date.now() });
+      // 具体在做什么：文件名或命令，让气泡从「正在读文件」细到「正在看 config.ts」
+      byAgent.set(key, { kind, tool: toolName, target: targetOf(args), since: Date.now() });
       return snapshot();
     },
     toolEnd(agent) {
@@ -315,7 +356,7 @@ export async function apply(ctx) {
       const toolName = typeof exec?.name === 'string' ? exec.name : '';
       if (key !== null && toolName) {
         try {
-          tracker.toolStart(key, toolName);
+          tracker.toolStart(key, toolName, exec?.arguments);
           broadcast();
         } catch (error) {
           /* 采集失败不能影响工具本身 */

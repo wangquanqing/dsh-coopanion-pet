@@ -51,9 +51,14 @@ export function createStatus(els, deps) {
       el.innerHTML = `<span class="cpn-status-icon">${icon((KINDS[next.kind] ?? KINDS.work).icon)}</span><span class="cpn-status-text"></span>`;
     }
     el.dataset.kind = next.kind;
+    // 有具体对象时把它附在文案后面：「正在看文件 · config.ts」
     const label = KINDS[next.kind]?.label ?? '';
-    el.querySelector('.cpn-status-text').textContent = label;
-    el.setAttribute('aria-label', label || '正在工作');
+    const full = next.target ? `${label} · ${next.target}` : label;
+    const textEl = el.querySelector('.cpn-status-text');
+    textEl.textContent = full;
+    // 具体对象可能很长，气泡最多显示一行，靠 title 让人悬停能看到全文
+    textEl.title = full;
+    el.setAttribute('aria-label', full || '正在工作');
     el.classList.remove('cpn-fading');
     el.hidden = false;
     if (pop) {
@@ -93,11 +98,16 @@ export function createStatus(els, deps) {
       // 「思考」刚出现时先等半秒：很多操作是瞬时的，闪一下反而吵
       if (next?.kind === 'think' && t - (next.since ?? 0) / 1000 < 0) return;
 
-      if (shown && next && shown.kind === next.kind) {
+      // 同一类活动但对象换了（看 a.ts → 看 b.ts）也要重画，否则文案停在旧文件上
+      const same = shown && next && shown.kind === next.kind && shown.target === next.target;
+      // 还没显示过东西时立刻画：`shownAt` 初值 0，若也走 1.2 秒防抖，
+      // 第一条状态会被白白压住一秒多，看起来像没反应。
+      const readyForNew = !shown || t - shownAt >= 1.2;
+      if (same) {
         if (fadeAt !== null) draw(next, false);
         shown = next;
         fadeAt = null;
-      } else if (!shown || t - shownAt >= 1.2) {
+      } else if (readyForNew) {
         if (next) {
           draw(next, shown?.kind !== next.kind);
           shown = next;

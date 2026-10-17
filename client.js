@@ -37,6 +37,8 @@ window.__ModuleLoader__.load({
 
     const STYLE_ATTR = 'data-dsh-coopanion-pet';
     const PREFS_KEY = 'dsh-coopanion-pet:prefs';
+    /** 状态事件流，与 index.js 的 EVENTS 保持一致。 */
+    const EVENTS = '/api/dsh-coopanion-pet/events';
     /** 站立地面与窗口底边的距离。 */
     const FLOOR_GAP = 8;
 
@@ -55,6 +57,8 @@ window.__ModuleLoader__.load({
       roamIndex: 0,
       sound: true,
       startShare: 0.78,
+      scheme: 'deepseek-maid',
+      statusBubble: true,
     };
 
     const CSS = `
@@ -91,19 +95,22 @@ window.__ModuleLoader__.load({
     async function startPet(initialPrefs) {
       const prefs = { ...initialPrefs };
 
-      const [kit, whale, { createSfx }, { createBubble }, { createTools, TOOLS_CSS }, { BUBBLE_CSS }] = await Promise.all([
+      const [kit, whale, { createSfx }, { createBubble }, { createTools, TOOLS_CSS },
+        { BUBBLE_CSS }, { createStatus, STATUS_CSS }, { createDress, DRESS_CSS }] = await Promise.all([
         import(`${ABS}kit/body.js`),
         import(`${ABS}whale/figure.js`),
         import(`${ABS}sfx.js`),
         import(`${ABS}bubble.js`),
         import(`${ABS}ui.js`),
         import(`${ABS}bubble.css.js`),
+        import(`${ABS}status.js`),
+        import(`${ABS}dress.js`),
       ]);
 
-      // 气泡与按钮条的样式随桌宠一起挂载、一起卸载，避免污染宿主的样式表。
+      // 气泡、按钮条、状态与装扮面板的样式随桌宠一起挂载、一起卸载，避免污染宿主的样式表。
       const style = document.createElement('style');
       style.setAttribute(STYLE_ATTR, 'parts');
-      style.textContent = BUBBLE_CSS + TOOLS_CSS;
+      style.textContent = BUBBLE_CSS + TOOLS_CSS + STATUS_CSS + DRESS_CSS;
       document.head.appendChild(style);
 
       // 形象包内部按 base 解析纹理与 model.json，必须传它自己的目录（绝对 URL）。
@@ -141,6 +148,12 @@ window.__ModuleLoader__.load({
         onAnswer: () => { /* 没有 Agent 在场时，回答只是热热身。 */ },
       });
 
+      // 对话优先：说话或提问时状态气泡让位，因此把 bubble 的忙碌当作判据。
+      const status = createStatus({ el: bubbleEl }, { busy: () => bubble.busy });
+
+      /** 装扮面板换装后要更新偏好，这里先占位，下面接上 body。 */
+      let dress = null;
+
       let tools = null;
 
       const body = kit.createBody(
@@ -153,6 +166,20 @@ window.__ModuleLoader__.load({
         },
         { figure, bounds: viewport, roam: ROAMS[prefs.roamIndex] ?? 'calm' },
       );
+
+      // 恢复上次的装扮（形象包不认的取值会在内核里退回默认）
+      if (prefs.scheme && prefs.scheme !== DEFAULT_PREFS.scheme) {
+        Promise.resolve(body.setScheme?.(prefs.scheme)).catch((error) => {
+          console.warn('[dsh-coopanion-pet] 恢复装扮失败：', error);
+        });
+      }
+
+      dress = createDress({
+        getScheme: () => prefs.scheme,
+        setScheme: (id, opts) => Promise.resolve(body.setScheme(id, opts)),
+        onPref: (k, v) => { prefs[k] = v; writePrefs({ [k]: v }); },
+      });
+      root.appendChild(dress.root);
 
       /* ---------- 操作界面 ---------- */
 
@@ -220,6 +247,17 @@ window.__ModuleLoader__.load({
             body.place(window.innerWidth * prefs.startShare, -1);
             break;
           }
+          case 'dress': {
+            if (dress.visible) dress.hide();
+            else dress.show(layout?.bubble ?? { x: layout?.x ?? 0, y: 0 }, prefs.dressPos);
+            break;
+          }
+          case 'status': {
+            prefs.statusBubble = !prefs.statusBubble;
+            writePrefs({ statusBubble: prefs.statusBubble });
+            if (!prefs.statusBubble) status.yield();
+            break;
+          }
           case 'hide': {
             writePrefs({ enabled: false });
             bubble.say('那我先躲起来，下次见。');
@@ -254,6 +292,9 @@ window.__ModuleLoader__.load({
           layout = body.layout();
           hits = layout?.hit ?? [];
           bubble.step(dt);
+          // 状态气泡：对话优先，所以要先问过 bubble
+          if (prefs.statusBubble !== false) status.step(dt);
+          else status.yield();
           bubble.place(layout?.bubble ?? { x: layout?.x ?? 0, y: 0 }, layout?.facing ?? 1);
           tools.place(layout?.box, layout?.side, {
             // 按钮条只在鼠标靠近她时出现，平时不占地方
@@ -268,6 +309,21 @@ window.__ModuleLoader__.load({
         raf = requestAnimationFrame(frame);
       };
       raf = requestAnimationFrame(frame);
+
+      /* ---------- 状态事件流 ----------
+         宿主通过 SSE 推「此刻在做什么」。客户端插件拿不到会话状态（见 index.js），
+         所以状态由宿主采集后下发。连不上就当没有状态气泡，不影响桌宠。 */
+      let events = null;
+      try {
+        events = new EventSource(EVENTS);
+        events.onmessage = (e) => {
+          try { status.set(JSON.parse(e.data)); } catch (error) { /* 坏帧忽略 */ }
+        };
+        // EventSource 自己会重连，这里只把噪音压住
+        events.onerror = () => {};
+      } catch (error) {
+        console.warn('[dsh-coopanion-pet] 状态流打不开，状态气泡不可用：', error);
+      }
 
       /* ---------- 指针 ----------
          命中判定用渲染内核回报的圆；只有命中她本体、或她自己的界面元素时才拦事件。
@@ -380,12 +436,20 @@ window.__ModuleLoader__.load({
         do: (word) => body.do(word),
         /** 走到窗口的某个横向位置。 */
         walk: (x, run) => body.walk(x, run),
+        /** 换一套装扮（`配色-服装`，如 `claude-maid`）。 */
+        setScheme: (id, opts) => Promise.resolve(body.setScheme(id, opts)),
+        /** 打开或收起装扮面板。 */
+        openDress: (open = true) => {
+          if (open) dress.show(layout?.bubble ?? { x: layout?.x ?? 0, y: 0 }, prefs.dressPos);
+          else dress.hide();
+        },
         /** 当前的布局快照（位置、模式、包围盒）。 */
         get layout() { return layout; },
         dispose() {
           stopped = true;
           cancelAnimationFrame(raf);
           setCursor('');
+          try { events?.close(); } catch (error) { /* 已经断了 */ }
           window.removeEventListener('pointerdown', onDown, true);
           window.removeEventListener('pointermove', onMove, true);
           window.removeEventListener('pointerup', onUp, true);
@@ -395,6 +459,7 @@ window.__ModuleLoader__.load({
           document.removeEventListener('pointerleave', onLeave);
           window.removeEventListener('resize', onResize);
           tools.dispose();
+          dress.dispose();
           bubbleEl.remove();
           style.remove();
           try {

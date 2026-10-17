@@ -16,6 +16,7 @@ const BUTTONS = [
   { id: 'face', icon: '🎭', title: '换个表情' },
   { id: 'act', icon: '🤸', title: '做个动作' },
   { id: 'walk', icon: '🚶', title: '走两步' },
+  { id: 'dress', icon: '👗', title: '装扮' },
   { id: 'sleep', icon: '😴', title: '睡觉 / 叫醒' },
 ];
 
@@ -59,6 +60,8 @@ export function createTools(els, deps) {
   /* ---------- 菜单 ---------- */
 
   const MENU_ITEMS = [
+    { id: 'dress', label: () => '装扮…' },
+    { id: 'status', label: () => (getPref('statusBubble') === false ? '开启状态气泡' : '关闭状态气泡') },
     { id: 'sound', label: () => (getPref('sound') ? '关闭音效' : '开启音效') },
     { id: 'size', label: () => `体型：${['小', '中', '大'][getPref('sizeIndex') ?? 1]}` },
     { id: 'roam', label: () => `漫游：${['安静', '随意', '活跃'][getPref('roamIndex') ?? 0]}` },

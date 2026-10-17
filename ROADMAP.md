@@ -25,8 +25,6 @@ Coopanion 全部功能按「移植到 DSH Web UI 插件」的难度分级。每�
 
 ## P1 ✅ 表现层（已完成）
 
-自包含的前端逻辑，不依赖 DSH 任何服务。
-
 | 功能 | 来源 | 状态 |
 | --- | --- | --- |
 | **气泡说话 + 打字机效果** | `web/pet-app.js` 的 say 分支 | ✅ `assets/bubble.js` |
@@ -35,16 +33,23 @@ Coopanion 全部功能按「移植到 DSH Web UI 插件」的难度分级。每�
 | **声音** | `web/sound.js` | ✅ `assets/sfx.js`，全部 WebAudio 合成，零素材 |
 | **悬停按钮与右键菜单** | 上游由 World 协议驱动 | ✅ `assets/ui.js`，本插件新写 |
 | **气泡样式与主题对接** | `web/pet.css` 气泡段落 | ✅ `assets/bubble.css.js`，接 DSH 主题令牌 |
+| **状态气泡** | `web/pet-app.js` 的 stepStatus | ✅ `assets/status.js`；状态由宿主采集、经 SSE 下发（见下） |
+| **装扮面板** | `web/dress.js`、`dress.css` | ✅ `assets/dress.js`，做成跟随桌宠的浮层 |
+| **其余 7 套配色** | `web/whale/schemes/*` | ✅ 已全部带上，共 8 套 |
+| **冬装（cape）** | `web/whale/outfits/cape/` | ✅ 面板内可切换 |
 
-**从 P1 挪到后面的**：
+**状态气泡为什么要绕宿主一圈**：探针实测（dsh 0.2.0-rc.2）显示浏览器端插件 `apply` 运行时
+只有 `slots`/`connection`/`loader`/`modules` 可用，`sessions`/`conversation`/`theme` 都取不到；
+`shell.overlay` 是 root 作用域插槽，框架注入的标准 props 是空接口。而宿主侧有 `agent/status`
+事件与 `tools/execute` 钩子，因此状态改由宿主采集、经 SSE（`/api/dsh-coopanion-pet/events`）下发。
+这条通道同时也为 P2 的「注册工具」铺好了路——反向通道现成。
+
+**仍未做的**：
 
 | 功能 | 为什么往后放 |
 | --- | --- |
-| 状态气泡（「正在思考 / 正在读」） | 数据源是 DSH 的会话状态，属于 P2 |
-| 装扮页 | 上游是独立页面（`dress.html`），需要自己的路由与 UI，工作量接近独立功能 |
-| 其余 7 套配色方案 | 素材每套约 1.4MB，按需再加；当前内置 deepseek 一套 |
-| 冬装（cape） | 素材已在包内，缺 UI 入口；可与装扮页一起做 |
 | i18n | 形象名已带 11 语言；界面文案目前只有中文 |
+| 装扮页的高级项 | 上游还支持导入第三方形象包（zip/文件夹），需要文件选择与沙箱加载 |
 
 ---
 
@@ -53,14 +58,18 @@ Coopanion 全部功能按「移植到 DSH Web UI 插件」的难度分级。每�
 | 功能 | 依赖 | 做法 |
 | --- | --- | --- |
 | **注册 `pet_*` 工具** | cordis `tools` 服务 | 让 Agent 能指挥她说、问、走、做动作。Coopanion 的 6 个工具 handler 在 `src/world.ts` 里可基本原样搬；本插件的 `window.__dshCoopanionPet` 已经是现成的调用面 |
-| **桌宠响应会话状态** | 会话事件 + `slots` | 把「正在思考 / 调用工具 / 完成」映射成她的表情与状态气泡 |
+| **状态映射细化** | 已有的 SSE 通道 | 目前只报「思考 / 读 / 写 / 查找 / 跑命令 / 等回答」；可细到具体文件名与工具参数 |
 | **设置面板** | `slots.register('settings.section')` | 把偏好从 `localStorage` 提到 DSH 设置页，替换当前只能右键改的状态 |
 | **环境提示词注入** | `dsh-system-prompt` 段 | 让模型知道桌宠存在与可用工具，来源 `src/ENV_PROMPT.md`（49 行） |
-| **宿主↔浏览器实时通道** | `webServer.registerUpgrade` | Agent 要主动驱动桌宠需要一条 WS 或 SSE；DSH 的 `webServer` 提供 `registerUpgrade` |
 
 **关键说明**：P2 的「注册工具」是让桌宠从「装饰」变成「能陪你干活的角色」的分水岭。
 Coopanion 原有的通信是 `ws://127.0.0.1:7797/socket?role=pet`，帧格式为带 `t` 字段的 JSON
-（下行 18 种、上行 20 种）。移植时不必照搬这套协议，直接用 DSH 的 cordis 事件与服务更自然。
+（下行 18 种、上行 20 种）。移植时不必照搬这套协议——本插件的 SSE 通道与
+`window.__dshCoopanionPet` 调用面已经够用。
+
+**实测注意**：验证 profile 里没有活跃会话时 `tools` 注册表为空（`tools.get('read')` 返回空、
+`schemas()` 为 0 个），因此注册工具最好走 `ctx.inject(['tools'])` 并在回调内注册，
+不要假设 `apply` 时刻就能拿到工具表。
 
 ---
 

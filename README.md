@@ -1,7 +1,7 @@
 # Coopanion 桌宠（DSH 插件）
 
 把 [Coopanion](https://github.com/Pal-AI-Lab/Coopanion) 的桌面宠物搬进 DeepSeek Harness 的 Web 界面，
-作为零侵入的 UI 插件运行。当前版本实现 **P0 桌宠本体 + P1 表现层**——
+作为零侵入的 UI 插件运行。当前版本实现 **P0 桌宠本体 + P1 表现层 + P2 接入 DSH**——
 
 **桌宠本体**
 
@@ -31,6 +31,21 @@
 - **2 套服装**：女仆装、冬装
 - 面板可拖动，位置会记住
 
+**Agent 能指挥她（P2）**
+
+装了本插件后，Agent 多了 6 个工具，可以在对话中直接让她做事：
+
+| 工具 | 做什么 |
+| --- | --- |
+| `pet_say` | 让她在气泡里说话，支持 `【表情, 动作】` 与 `<表情>` 标记 |
+| `pet_ask` | 让她问用户一个问题（最多 3 个选项 + 自填框），用户的回答会作为新消息回到会话 |
+| `pet_walk` | 走到屏幕某个横向位置，可让她跑 |
+| `pet_act` | 做一个表情或动作（19 种表情、14 个动作） |
+| `pet_dress` | 换配色或服装 |
+| `pet_status` | 查她现在在不在、在哪、在做什么 |
+
+她不在（没有页面打开）时，工具会如实回报 `offline` 而不是假装成功。
+
 形象、动画与渲染内核 **原样取自 Coopanion**，未作修改。
 
 ## 安装
@@ -58,11 +73,25 @@ dsh plugin --profile web add "file:D:\path\to\dsh-coopanion-pet"
 
 | 半边 | 文件 | 职责 |
 | --- | --- | --- |
-| 宿主 | `index.js` | 只读静态路由 `/api/dsh-coopanion-pet/assets/`；采集运行状态并经 SSE（`/api/dsh-coopanion-pet/events`）下发 |
-| 客户端 | `client.js` | 向 `shell.overlay` 插槽注册桌宠组件，跑 WebGL 渲染循环，订阅状态流 |
+| 宿主 | `index.js` | 静态路由；采集运行状态经 SSE 下发；注册 `pet_*` 工具；收页面回传 |
+| 宿主 | `lib/channel.js` | 双向通道：命令编号、下发、等回执、超时兜底、离线判定 |
+| 宿主 | `lib/tools.js` | 六个 `pet_*` 工具的定义与执行 |
+| 宿主 | `lib/define-tool.js` | 把属性级 `required: true` 转成标准 JSON Schema（见下） |
+| 客户端 | `client.js` | `shell.overlay` 插槽里的桌宠，跑 WebGL 循环，收命令、发回执 |
 
 路由用 `prefix` 而非 `exact`，因为形象包内部有相对路径导入（`whale/figure.js` → `../kit/rig.js`、
 纹理 `tex/*.png`），只有路径形式的 URL 才能让浏览器按相对关系解析成功。
+
+### 三个 HTTP 端点
+
+| 端点 | 方向 | 用途 |
+| --- | --- | --- |
+| `/api/dsh-coopanion-pet/assets/*` | 宿主 → 浏览器 | 渲染内核、形象包、纹理 |
+| `/api/dsh-coopanion-pet/events` | 宿主 → 浏览器（SSE） | 运行状态；Agent 下发的命令 |
+| `/api/dsh-coopanion-pet/report` | 浏览器 → 宿主（POST） | 命令回执、用户回答、桌面侧状态 |
+
+不用 DSH 的 RPC 做上下行：本插件只需要「推一件事、回一件事」，自己的路由更直接，
+也不依赖宿主内部接口的稳定性。
 
 ### 状态为什么要绕宿主一圈
 
@@ -72,7 +101,17 @@ dsh plugin --profile web add "file:D:\path\to\dsh-coopanion-pet"
 也没有会话信息。所以状态气泡不能由客户端自己取数。
 
 宿主侧则拿得到：`agent/status` 事件（一轮对话的开始与结束）与 `tools/execute` 钩子（每次工具调用）。
-因此状态由宿主采集、经 SSE 下发，客户端只负责显示。
+因此状态由宿主采集、经 SSE 下发，客户端只负责显示。同一条通道也让 `pet_*` 工具能反向驱动页面。
+
+### 工具定义为什么要自己转 schema
+
+DSH 官方的工具都用 `defineTool()` 造，它把「属性上写 `required: true`」的写法提成对象级的
+`required: [...]` 数组。直接调 `tools.register()` 绕过这一步，注册会报
+`required is not supported on type "boolean"`。
+
+`lib/define-tool.js` 做同一件事，但不依赖 `@deepseek-ai/dsh-tools`——那是宿主内部包，
+版本一变就可能对不上。转换只有两条规则：标了 `required: true` 的属性名进 `required` 数组，
+属性自己的那个标记去掉。
 
 ## 资源构成
 
@@ -93,7 +132,8 @@ assets/
 ├── bubble.css.js   气泡样式，配色对接 DSH 主题令牌
 ├── status.js       状态气泡：接 SSE，让位于对话（移植自 pet-app.js 的 stepStatus）
 ├── dress.js        装扮面板：配色与服装切换（新写）
-└── ui.js           悬停按钮条与右键菜单（新写，上游这些由 World 协议驱动）
+├── ui.js           悬停按钮条与右键菜单（新写，上游这些由 World 协议驱动）
+└── ../lib/         宿主半边（通道、工具定义）
 ```
 
 合计约 15 MB，其中 9.6 MB 是 7 套可选配色；只用默认配色的话实际加载约 2.5 MB
@@ -133,6 +173,11 @@ assets/
 7. **装扮面板重写为插件内面板。** 上游是独立页面（`dress.html` + `dress.js`），
    本插件把它做成跟随桌宠的浮层，只保留配色与服装两条轴。
 
+8. **状态上报不用 `keepalive`，且在途只留一条。** 她走动时位置每帧都在变，状态上报是高频的；
+   浏览器在同一个 `keepalive` 请求还没落地时再次发起会把前一个取消掉（表现为 `ERR_ABORTED`），
+   于是每次上报都变成「一次成功 + 一次被取消」。因此改为普通 fetch，并把位置量化到 10px 粒度，
+   只有跨过一格或模式/装扮变了才发。用户的回答与命令回执走另一条必达路径（不受在途限制）。
+
 ## 验证状态
 
 在真实浏览器（Edge headless + SwiftShader）里对 DSH Web UI 做过端到端验证：
@@ -155,11 +200,22 @@ assets/
 | 主题未被污染 | 通过 —— `html` 上无 `data-theme` |
 | 控制台错误 / 失败请求 | 均无 |
 
-**未验到的部分（如实说明）**：`tools/execute` 钩子在真实工具调用中的表现只做了代码级核对——
-写法与官方策略插件 `dsh-session-checkpoint-policy` 一致（`async (exec, next) => … return await next()`，
-且 `exec.agent` 可能为空需兜底）。真实轮次的端到端验证没做成，原因是验证 profile 里没有活跃会话时
-`tools` 注册表为空（实测 `tools.get('read')` 返回空、`schemas()` 为 0 个），无法在不接入真实会话的情况下
-触发一次成功的工具调用。**建议首次实际使用时留意工具调用是否正常**；若有异常，先禁用本插件即可排除。
+**P2 工具闭环**（用一个会回执的客户端扮演页面，让探针调真实工具）：
+
+| 项 | 结果 |
+| --- | --- |
+| 工具注册 | 通过 —— 6 个 `pet_*` 全部注册，`disposer` 都是函数 |
+| 命令下发 | 通过 —— SSE 依次推出 5 条命令帧，编号 `c1`–`c5`、参数完整 |
+| 回执闭环 | 通过 —— 扮演页面对 5 条命令全部回执 204，工具拿到 `ok:true` |
+| 离线如实回报 | 通过 —— 没有页面连上时返回 `offline` 与原因，不假装成功 |
+| 端点校验 | 通过 —— `/report` 只收 POST（GET 返回 405），坏 JSON 与未知 kind 返回 400 |
+
+**未验到的部分（如实说明）**：工具的端到端验证用的是「扮演页面的客户端」而非真实浏览器标签页——
+因为探针在服务启动后几秒就开始轮询，而浏览器要十几秒才把桌宠加载完并连上 SSE，两者的时序在这个
+验证环境里总是错开。因此「SSE 命令帧真的会让浏览器里的她说话/走路」这一段，是由以下两点合并支撑的：
+（1）命令帧格式与 `runCommand` 的处理分支已逐条核对；（2）页面自身的执行能力（`api.say`、
+装扮切换等）已在浏览器里单独验证通过。**真机上两者是同一个页面，链路是通的**，但没有一次
+「真实浏览器 + 真实工具调用」的合并验证，建议首次使用时留意。
 
 ## 配置
 

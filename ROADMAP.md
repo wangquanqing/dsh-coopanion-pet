@@ -53,23 +53,39 @@ Coopanion 全部功能按「移植到 DSH Web UI 插件」的难度分级。每�
 
 ---
 
-## P2 🟡 接入 DSH（下一步）
+## P2 ✅ 接入 DSH（已完成）
 
-| 功能 | 依赖 | 做法 |
+| 功能 | 依赖 | 状态 |
 | --- | --- | --- |
-| **注册 `pet_*` 工具** | cordis `tools` 服务 | 让 Agent 能指挥她说、问、走、做动作。Coopanion 的 6 个工具 handler 在 `src/world.ts` 里可基本原样搬；本插件的 `window.__dshCoopanionPet` 已经是现成的调用面 |
-| **状态映射细化** | 已有的 SSE 通道 | 目前只报「思考 / 读 / 写 / 查找 / 跑命令 / 等回答」；可细到具体文件名与工具参数 |
-| **设置面板** | `slots.register('settings.section')` | 把偏好从 `localStorage` 提到 DSH 设置页，替换当前只能右键改的状态 |
-| **环境提示词注入** | `dsh-system-prompt` 段 | 让模型知道桌宠存在与可用工具，来源 `src/ENV_PROMPT.md`（49 行） |
+| **注册 `pet_*` 工具** | cordis `tools` 服务 | ✅ 6 个：`say`/`ask`/`walk`/`act`/`dress`/`status`（`lib/tools.js`） |
+| **宿主↔浏览器双向通道** | `webServer.register` + SSE + POST | ✅ `lib/channel.js`：命令编号、下发、等回执、超时兜底、离线判定 |
+| **用户回答回到会话** | `agent.followup` | ✅ 页面 POST 回答 → 宿主作为新消息送回会话 |
+| **桌面侧状态上报** | 同一条 POST 通道 | ✅ 位置、模式、装扮定期上报，`pet_status` 据此回答 |
+| **工具定义 schema 转换** | 无（自实现） | ✅ `lib/define-tool.js`，不依赖宿主内部包 |
 
-**关键说明**：P2 的「注册工具」是让桌宠从「装饰」变成「能陪你干活的角色」的分水岭。
-Coopanion 原有的通信是 `ws://127.0.0.1:7797/socket?role=pet`，帧格式为带 `t` 字段的 JSON
-（下行 18 种、上行 20 种）。移植时不必照搬这套协议——本插件的 SSE 通道与
-`window.__dshCoopanionPet` 调用面已经够用。
+**P2 踩过的两个坑**（记下来省得重踩）：
+
+1. **工具注册必须走 `defineTool` 那一步。** DSH 官方的工具都用 `defineTool()` 造，它把「属性上写
+   `required: true`」提成对象级的 `required: [...]` 数组。直接调 `tools.register()` 会报
+   `required is not supported on type "boolean"`——**六个工具全部注册失败**，而且失败信息只在
+   注册时抛出，不看返回值容易漏。本插件自实现同样的转换（`lib/define-tool.js`），
+   不硬依赖 `@deepseek-ai/dsh-tools`。
+
+2. **状态上报别用 `keepalive`。** 她走动时位置每帧都变，上报是高频的；浏览器在同一个 `keepalive`
+   请求还没落地时再次发起会取消前一个（`ERR_ABORTED`），于是每次上报都变成「一次成功 + 一次被取消」。
+   改为普通 fetch + 在途只留一条 + 位置量化到 10px。
+
+**仍未做的**：
+
+| 功能 | 为什么 |
+| --- | --- |
+| 状态映射细化 | 目前只报「思考 / 读 / 写 / 查找 / 跑命令 / 等回答」；可细到具体文件名与工具参数 |
+| 设置面板 | 偏好仍在 `localStorage` + 右键菜单；提到 DSH 设置页需 `slots.register('settings.section')` |
+| 环境提示词注入 | 让模型知道桌宠存在；来源 `src/ENV_PROMPT.md`（49 行） |
 
 **实测注意**：验证 profile 里没有活跃会话时 `tools` 注册表为空（`tools.get('read')` 返回空、
-`schemas()` 为 0 个），因此注册工具最好走 `ctx.inject(['tools'])` 并在回调内注册，
-不要假设 `apply` 时刻就能拿到工具表。
+`schemas()` 为 0 个），但 `ctx.inject(['tools'])` 仍会触发，注册也能成功——工具是全局的，
+只是「当前没有 agent 能调用」。因此注册要走 `ctx.inject(['tools'])`，不要假设 `apply` 时刻就能拿到。
 
 ---
 

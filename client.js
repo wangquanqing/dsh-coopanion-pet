@@ -39,6 +39,8 @@ window.__ModuleLoader__.load({
     const PREFS_KEY = 'dsh-coopanion-pet:prefs';
     /** 状态事件流，与 index.js 的 EVENTS 保持一致。 */
     const EVENTS = '/api/dsh-coopanion-pet/events';
+    /** 回传地址，与 index.js 的 REPORT 保持一致。 */
+    const REPORT = '/api/dsh-coopanion-pet/report';
     /** 站立地面与窗口底边的距离。 */
     const FLOOR_GAP = 8;
 
@@ -141,11 +143,49 @@ window.__ModuleLoader__.load({
       /** 最近一帧的布局，供指针判定与摆放读取。 */
       let layout = null;
 
+      /** 往宿主回一条消息；失败只吞掉，不打扰用户。 */
+      /**
+       * 往宿主回一条消息。
+       *
+       * 不用 `keepalive`：桌宠的状态上报是高频的，浏览器在同一个 keepalive
+       * 请求还没落地时再次发起，会把前一个取消掉（表现为 ERR_ABORTED），
+       * 于是每次上报都变成「一次成功 + 一次被取消」。
+       * 页面卸载时丢一条状态无所谓，因此这里只要普通 fetch。
+       *
+       * `must` 为真时一定发出去（用户的回答不能丢），否则在途一条就跳过——
+       * 状态上报是「最新值覆盖」的语义，排队没有意义。
+       */
+      let reportInFlight = false;
+      const report = (payload, must = false) => {
+        if (reportInFlight && !must) return;
+        reportInFlight = true;
+        try {
+          fetch(REPORT, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload),
+          }).catch(() => {}).finally(() => { reportInFlight = false; });
+        } catch (error) {
+          reportInFlight = false;
+        }
+      };
+
+      /** 最近问出去的那个问题，回答回传时一并发回去，好在会话里说清是在答什么。 */
+      let lastQuestion = '';
+
       const bubble = createBubble({ bubble: bubbleEl }, {
         sfx,
         onTalk: () => body.talk(),
         onAct: (actions) => { for (const a of actions) body.do(a); },
-        onAnswer: () => { /* 没有 Agent 在场时，回答只是热热身。 */ },
+        onAnswer: (a) => {
+          // 用户回答了一个提问：送回宿主，由它作为一条新消息转给 Agent。
+          // 放弃（Esc）不算回答，不回传。
+          if (!a || a.dismissed) return;
+          const text = a.text !== undefined ? String(a.text) : String(a.label ?? '');
+          if (!text) return;
+          report({ kind: 'answer', text, via: a.text !== undefined ? 'typed' : 'option', question: lastQuestion }, true);
+          lastQuestion = '';
+        },
       });
 
       // 对话优先：说话或提问时状态气泡让位，因此把 bubble 的忙碌当作判据。
@@ -279,6 +319,8 @@ window.__ModuleLoader__.load({
       /* ---------- 帧循环 ---------- */
 
       let raf = 0, last = performance.now(), stopped = false;
+      /** 帧计数，用来降低状态上报的频度。 */
+      let tick = 0;
       /** 最近一帧的命中圆，供指针判定读取。 */
       let hits = [];
 
@@ -301,6 +343,8 @@ window.__ModuleLoader__.load({
             visible: !!layout && (hovering || tools.over(lastPointer.x, lastPointer.y))
               && !['drag', 'air'].includes(layout.mode),
           });
+          // 定期把她的位置与在做什么送回宿主（内部做了去重，不会每帧都发）
+          if ((tick++ & 15) === 0) reportState();
         } catch (error) {
           console.warn('[dsh-coopanion-pet] 帧绘制失败，桌宠已停止：', error);
           stopped = true;
@@ -310,20 +354,97 @@ window.__ModuleLoader__.load({
       };
       raf = requestAnimationFrame(frame);
 
-      /* ---------- 状态事件流 ----------
-         宿主通过 SSE 推「此刻在做什么」。客户端插件拿不到会话状态（见 index.js），
-         所以状态由宿主采集后下发。连不上就当没有状态气泡，不影响桌宠。 */
+      /* ---------- 与宿主的双向通道 ----------
+         下行：宿主经 SSE 推状态，以及 Agent 经 pet_* 工具下发的命令。
+         上行：页面 POST 回执、用户对提问的回答、桌面侧状态。
+         连不上就当没有这些功能，桌宠本体不受影响。 */
+
+      /** 执行一条来自 Agent 的命令，返回回执内容。 */
+      const runCommand = async (op, args) => {
+        switch (op) {
+          case 'say': {
+            bubble.say(String(args?.text ?? ''));
+            return { ok: true };
+          }
+          case 'ask': {
+            const options = Array.isArray(args?.options) ? args.options.map(String).slice(0, 3) : [];
+            lastQuestion = String(args?.question ?? '');
+            bubble.ask(lastQuestion, options, { own: args?.own !== false });
+            return { ok: true };
+          }
+          case 'walk': {
+            const x = typeof args?.x === 'number' && Number.isFinite(args.x)
+              ? Math.max(0, Math.min(args.x, window.innerWidth))
+              : Math.random() * window.innerWidth;
+            body.walk(x, args?.run === true);
+            return { ok: true };
+          }
+          case 'act': {
+            const word = String(args?.word ?? '');
+            const ok = body.do(word);
+            return ok === false ? { ok: false, reason: 'unknown-word' } : { ok: true };
+          }
+          case 'dress': {
+            const parts = String(prefs.scheme ?? 'deepseek-maid').split('-');
+            const nextScheme = args?.scheme ?? parts[0] ?? 'deepseek';
+            const nextOutfit = args?.outfit ?? parts[1] ?? 'maid';
+            const id = `${nextScheme}-${nextOutfit}`;
+            prefs.scheme = id;
+            writePrefs({ scheme: id });
+            await Promise.resolve(body.setScheme(id, { fade: 0.3 })).catch(() => {});
+            return { ok: true };
+          }
+          default:
+            return { ok: false, reason: 'unknown-op' };
+        }
+      };
+
       let events = null;
       try {
         events = new EventSource(EVENTS);
-        events.onmessage = (e) => {
-          try { status.set(JSON.parse(e.data)); } catch (error) { /* 坏帧忽略 */ }
+        events.onmessage = async (e) => {
+          let frame = null;
+          try { frame = JSON.parse(e.data); } catch (error) { return; }
+          if (!frame || typeof frame !== 'object') return;
+
+          if (frame.type === 'command' && typeof frame.id === 'string') {
+            let result;
+            try {
+              result = await runCommand(frame.op, frame.args ?? {});
+            } catch (error) {
+              result = { ok: false, reason: 'failed' };
+            }
+            report({ kind: 'settle', id: frame.id, result }, true);
+            return;
+          }
+          // 状态帧（以及任何带 kind 的旧格式）交给状态气泡
+          status.set(frame.kind ? frame : frame.status ?? { kind: 'none' });
         };
         // EventSource 自己会重连，这里只把噪音压住
         events.onerror = () => {};
       } catch (error) {
-        console.warn('[dsh-coopanion-pet] 状态流打不开，状态气泡不可用：', error);
+        console.warn('[dsh-coopanion-pet] 事件流打不开，状态气泡与 Agent 控制不可用：', error);
       }
+
+      /* ---------- 上报桌面侧状态 ----------
+         工具要回答「她现在在哪、在做什么」，因此定期把布局与装扮送回宿主。
+         她走动时 x 每帧都在变，所以位置按 10px 粒度量化；只有真正跨过一格
+         或模式/装扮变了才上报，否则一次走动会发出上百条。 */
+      let lastReport = '';
+      const reportState = () => {
+        const l = layout;
+        if (!l) return;
+        const payload = {
+          kind: 'state',
+          x: Math.round((l.x ?? 0) / 10) * 10,
+          mode: String(l.mode ?? 'idle'),
+          scheme: String(prefs.scheme ?? ''),
+        };
+        const key = `${payload.x}|${payload.mode}|${payload.scheme}`;
+        if (key === lastReport) return;
+        lastReport = key;
+        report(payload);
+      };
 
       /* ---------- 指针 ----------
          命中判定用渲染内核回报的圆；只有命中她本体、或她自己的界面元素时才拦事件。

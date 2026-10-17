@@ -709,8 +709,12 @@ window.__ModuleLoader__.load({
         do: (word) => body.do(word),
         /** 走到窗口的某个横向位置。 */
         walk: (x, run) => body.walk(x, run),
-        /** 换一套装扮（`配色-服装`，如 `claude-maid`）。 */
-        setScheme: (id, opts) => Promise.resolve(body.setScheme(id, opts)),
+        /** 换一套装扮（`配色-服装`，如 `claude-maid`），并记住选择。 */
+        setScheme: (id, opts) => {
+          prefs.scheme = String(id);
+          writePrefs({ scheme: prefs.scheme });
+          return Promise.resolve(body.setScheme(id, opts));
+        },
         /** 打开或收起装扮面板。 */
         openDress: (open = true) => {
           if (open) dress.show(layout?.bubble ?? { x: layout?.x ?? 0, y: 0 }, prefs.dressPos);

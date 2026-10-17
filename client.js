@@ -118,8 +118,8 @@ window.__ModuleLoader__.load({
         for (const key of SYNCED) {
           if (stored[key] === undefined || stored[key] === prefs[key]) continue;
           prefs[key] = stored[key];
-          // 有几项要立刻作用到桌宠，而不是等下一次重建
-          if (key === 'sound') sfx.set(prefs.sound);
+          // 安静期间不要被偏好同步把声音打开
+          if (key === 'sound') { if (!isQuiet()) sfx.set(prefs.sound); }
           else if (key === 'sizeIndex') { body.set({ bounds: viewport() }); body.resize(); }
           else if (key === 'roamIndex') body.set({ roam: ROAMS[prefs.roamIndex] ?? 'calm' });
           else if (key === 'scheme') Promise.resolve(body.setScheme?.(prefs.scheme)).catch(() => {});
@@ -171,6 +171,33 @@ window.__ModuleLoader__.load({
 
       /** 最近一帧的布局，供指针判定与摆放读取。 */
       let layout = null;
+
+      /* ---------- 位置记忆 ----------
+         下次打开页面时她回到上次站的地方。存的是占窗口宽度的比例，
+         这样换窗口大小也不会跑到屏幕外。拖拽、走动都会更新它。 */
+      const readPos = () => {
+        try {
+          const raw = window.localStorage.getItem(`${PREFS_KEY}:x`);
+          const n = raw === null ? NaN : Number(raw);
+          return Number.isFinite(n) && n >= 0 && n <= 1 ? n : null;
+        } catch (error) {
+          return null;
+        }
+      };
+
+      /** 她该从哪儿开始：上次的位置，没有就用默认比例。 */
+      const startX = () => {
+        const saved = readPos();
+        const share = saved ?? prefs.startShare;
+        return Math.max(0, Math.min(window.innerWidth * share, window.innerWidth));
+      };
+
+      /** 把当前位置记下来。只在真的停了的时候写，避免走动时高频写盘。 */
+      const rememberPos = () => {
+        if (!layout) return;
+        const share = Math.max(0, Math.min(layout.x / Math.max(1, window.innerWidth), 1));
+        try { window.localStorage.setItem(`${PREFS_KEY}:x`, String(Math.round(share * 1000) / 1000)); } catch (error) { /* 存不下就算了 */ }
+      };
 
       /** 往宿主回一条消息；失败只吞掉，不打扰用户。 */
       /**
@@ -231,7 +258,7 @@ window.__ModuleLoader__.load({
           bounds: viewport,
           emit: () => {},
           sound: (name, kind, ...args) => sfx.play(name, kind, ...args),
-          start: { x: window.innerWidth * prefs.startShare, facing: -1, enter: 'drop' },
+          start: { x: startX(), facing: -1, enter: 'drop' },
         },
         { figure, bounds: viewport, roam: ROAMS[prefs.roamIndex] ?? 'calm' },
       );
@@ -313,7 +340,7 @@ window.__ModuleLoader__.load({
             break;
           }
           case 'home': {
-            body.place(window.innerWidth * prefs.startShare, -1);
+            body.place(startX(), -1);
             break;
           }
           case 'dress': {
@@ -344,6 +371,40 @@ window.__ModuleLoader__.load({
         getPref: (k) => prefs[k],
       });
       root.appendChild(bubbleEl);
+
+      /* ---------- 安静 ----------
+         临时关掉声音、漫游与状态气泡，到时自动恢复。
+         刻意不动用户的偏好（localStorage）：安静是一次性的，用户没要求改设置。 */
+      /** 安静到什么时候（毫秒时间戳），0 表示没在安静。 */
+      let quietUntil = 0;
+      /** 安静前的音效状态，恢复时还原。 */
+      let soundBeforeQuiet = null;
+
+      const setQuiet = (ms) => {
+        const now = Date.now();
+        if (!ms) {
+          // 立刻结束
+          if (quietUntil) {
+            quietUntil = 0;
+            body.set({ hold: 0 });
+            if (soundBeforeQuiet !== null) { prefs.sound = soundBeforeQuiet; sfx.set(soundBeforeQuiet); soundBeforeQuiet = null; }
+          }
+          return;
+        }
+        if (!quietUntil) soundBeforeQuiet = prefs.sound;
+        quietUntil = now + ms;
+        prefs.sound = false;
+        sfx.set(false);
+        // hold 的单位是秒；多给 1 秒，由 settle 负责在到点时精确结束
+        body.set({ hold: Math.ceil(ms / 1000) + 1 });
+      };
+
+      /** 到点就恢复。每帧调一次，成本可忽略。 */
+      const settleQuiet = () => {
+        if (quietUntil && Date.now() >= quietUntil) setQuiet(0);
+      };
+
+      const isQuiet = () => quietUntil > 0;
 
       /* ---------- 帧循环 ---------- */
 
@@ -387,13 +448,20 @@ window.__ModuleLoader__.load({
           layout = body.layout();
           hits = layout?.hit ?? [];
           bubble.step(dt);
+          // 安静到点就恢复
+          settleQuiet();
           // 状态气泡：对话优先，所以要先问过 bubble
-          if (prefs.statusBubble !== false) status.step(dt);
+          if (prefs.statusBubble !== false && !isQuiet()) status.step(dt);
           else status.yield();
           bubble.place(layout?.bubble ?? { x: layout?.x ?? 0, y: 0 }, layout?.facing ?? 1);
           tools.place(layout?.box, layout?.side, { visible: wantsTools() });
           // 定期把她的位置与在做什么送回宿主（内部做了去重，不会每帧都发）
           if ((tick++ & 15) === 0) reportState();
+          // 她停稳后才记位置：走动时每帧写盘没有意义
+          if ((tick & 31) === 0) {
+            const moving = layout && ['walk', 'run', 'drag', 'air'].includes(layout.mode);
+            if (!moving) rememberPos();
+          }
           // 低频检查设置面板是否改过偏好
           if ((tick & 31) === 0) syncPrefs();
         } catch (error) {
@@ -444,6 +512,39 @@ window.__ModuleLoader__.load({
             writePrefs({ scheme: id });
             await Promise.resolve(body.setScheme(id, { fade: 0.3 })).catch(() => {});
             return { ok: true };
+          }
+          case 'quiet': {
+            // 安静：关音效、不走动、状态气泡让位。临时状态，不改用户偏好。
+            const minutes = typeof args?.minutes === 'number' && Number.isFinite(args.minutes) ? Math.max(0, args.minutes) : 15;
+            setQuiet(minutes > 0 ? minutes * 60_000 : 0);
+            return { ok: true, until: quietUntil };
+          }
+          case 'set': {
+            const patch = args?.patch ?? {};
+            const applied = {};
+            if (typeof patch.sizeIndex === 'number') {
+              prefs.sizeIndex = patch.sizeIndex;
+              applied.sizeIndex = prefs.sizeIndex;
+              body.set({ bounds: viewport() });
+              body.resize();
+            }
+            if (typeof patch.roamIndex === 'number') {
+              prefs.roamIndex = patch.roamIndex;
+              applied.roamIndex = prefs.roamIndex;
+              body.set({ roam: ROAMS[prefs.roamIndex] ?? 'calm' });
+            }
+            if (typeof patch.sound === 'boolean') {
+              prefs.sound = patch.sound;
+              applied.sound = prefs.sound;
+              sfx.set(prefs.sound);
+            }
+            if (typeof patch.statusBubble === 'boolean') {
+              prefs.statusBubble = patch.statusBubble;
+              applied.statusBubble = prefs.statusBubble;
+              if (!prefs.statusBubble) status.yield();
+            }
+            if (Object.keys(applied).length) writePrefs(applied);
+            return { ok: true, applied };
           }
           default:
             return { ok: false, reason: 'unknown-op' };

@@ -43,8 +43,14 @@
 | `pet_act` | 做一个表情或动作（19 种表情、14 个动作） |
 | `pet_dress` | 换配色或服装 |
 | `pet_status` | 查她现在在不在、在哪、在做什么 |
+| `pet_quiet` | 让她安静 N 分钟：关音效、不走动、状态气泡让位，到时自动恢复。不动用户的偏好 |
+| `pet_set` | 改她自己的体型、漫游倾向、音效、状态气泡开关 |
 
 她不在（没有页面打开）时，工具会如实回报 `offline` 而不是假装成功。
+
+**她记得自己站哪儿**
+
+刷新或重开页面后回到上次的位置（存的是占窗口宽度的比例，换窗口大小也不会跑出屏幕）。
 
 **设置面板与提示词（P2）**
 
@@ -59,13 +65,19 @@
 需要一个带 Web UI 的 profile（`dsh web`、DSH 桌面端，或任何含 `@deepseek-ai/dsh-web-app` 的组合）。
 
 ```powershell
-dsh plugin --profile <你的profile> add "file:<本目录的绝对路径>"
+dsh plugin --profile <你的profile> add dsh-coopanion-pet
 ```
 
-例如：
+从 GitHub 装（对应仓库最新版）：
 
 ```powershell
-dsh plugin --profile web add "file:D:\path\to\dsh-coopanion-pet"
+dsh plugin --profile <你的profile> add "github:wangquanqing/dsh-coopanion-pet"
+```
+
+从本地目录装：
+
+```powershell
+dsh plugin --profile <你的profile> add "file:D:\path\to\dsh-coopanion-pet"
 ```
 
 装完**重启宿主**（浏览器刷新不够，客户端模块需要重新装配）。桌面端由 Electron 独占管理其 profile，
@@ -223,6 +235,15 @@ assets/
 | 设置面板出现 | 通过 —— 设置页导航多了「桌宠」一栏，面板含 3 个开关 + 2 组选择 |
 | 面板改设置生效 | 通过 —— 体型改到「大」后，她的画布从 107px 变成 135px |
 | 提示词注入 | 通过 —— `systemPrompt.assemble()` 渲染出 7914 字符，里面含完整的桌宠段落 |
+
+**v1.0 收尾三项**：
+
+| 项 | 结果 |
+| --- | --- |
+| `pet_quiet` | 通过 —— `minutes: 1` 返回「安静约 1 分钟」，安静期间位置 `0 → 0` 不动，`minutes: 0` 立刻恢复 |
+| `pet_set` | 通过 —— 依次改成 small / large / medium + roaming quiet，均返回 `ok:true` |
+| 参数校验 | 通过 —— 空 `pet_set` 报 `empty`，`size: 9` 报 `bad-size`，`roam: -1` 报 `bad-roam` |
+| 位置记忆 | 通过 —— 存下比例、重载后回到原处 |
 
 **未验到的部分（如实说明）**：工具的端到端验证用的是「扮演页面的客户端」而非真实浏览器标签页——
 因为探针在服务启动后几秒就开始轮询，而浏览器要十几秒才把桌宠加载完并连上 SSE，两者的时序在这个

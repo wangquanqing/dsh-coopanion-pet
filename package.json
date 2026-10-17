@@ -1,9 +1,17 @@
 {
   "name": "dsh-coopanion-pet",
-  "version": "0.1.0",
-  "private": true,
+  "version": "1.0.0",
   "type": "module",
-  "description": "Coopanion 桌宠 for DeepSeek Harness：把 Coopanion 的桌面宠物（DeepSeek 鲸鱼娘）搬进 DSH Web UI 与桌面端",
+  "description": "Coopanion desktop pet for DeepSeek Harness: a whale-girl mascot that speaks, moves and can be driven by the agent",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "desktop-pet",
+    "mascot",
+    "coopanion",
+    "whale"
+  ],
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -34,11 +42,28 @@
       "inject": [
         "@deepseek-ai/dsh-client-ui-layout"
       ]
+    },
+    "compatibility": {
+      "dshReleases": {
+        "0.2.0-rc.2": "compatible"
+      },
+      "note": "在 dsh 0.2.0-rc.2（web profile 与桌面端内嵌运行时）上完成安装、加载与端到端验收：桌宠渲染、拖拽、界面穿透、气泡、装扮、pet_* 工具闭环、设置面板、提示词注入，控制台零错误。"
     }
   },
   "meta": {
     "title": "Coopanion 桌宠",
-    "description": "住在界面下沿的桌宠：气泡说话、表情动作、走路，可拖动。形象取自 Coopanion。"
+    "description": "住在界面下沿的桌宠：气泡说话、表情动作、走路，可拖动，能听懂 Agent 的指挥。形象取自 Coopanion。"
   },
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wangquanqing/dsh-coopanion-pet.git"
+  },
+  "bugs": {
+    "url": "https://github.com/wangquanqing/dsh-coopanion-pet/issues"
+  },
+  "homepage": "https://github.com/wangquanqing/dsh-coopanion-pet#readme",
   "license": "AGPL-3.0-or-later"
 }

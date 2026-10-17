@@ -97,6 +97,35 @@ window.__ModuleLoader__.load({
     async function startPet(initialPrefs) {
       const prefs = { ...initialPrefs };
 
+      /**
+       * 从 `localStorage` 同步设置面板改过的偏好。
+       *
+       * 设置面板与桌宠各持一份偏好：面板写 `localStorage`，桌宠读自己的副本。
+       * 每帧读 `localStorage` 太浪费，因此只在值真的变了时同步，
+       * 且只同步面板能改的那几项。`apply` 里的引用都是调用时才解析，
+       * 因此这个函数可以定义在它们之前。
+       */
+      const SYNCED = ['sizeIndex', 'roamIndex', 'sound', 'statusBubble', 'scheme'];
+      let lastPrefsRaw = '';
+      const syncPrefs = () => {
+        let raw;
+        try { raw = window.localStorage.getItem(PREFS_KEY) ?? ''; } catch (error) { return; }
+        if (raw === lastPrefsRaw) return;
+        lastPrefsRaw = raw;
+        let stored;
+        try { stored = JSON.parse(raw); } catch (error) { return; }
+        if (!stored || typeof stored !== 'object') return;
+        for (const key of SYNCED) {
+          if (stored[key] === undefined || stored[key] === prefs[key]) continue;
+          prefs[key] = stored[key];
+          // 有几项要立刻作用到桌宠，而不是等下一次重建
+          if (key === 'sound') sfx.set(prefs.sound);
+          else if (key === 'sizeIndex') { body.set({ bounds: viewport() }); body.resize(); }
+          else if (key === 'roamIndex') body.set({ roam: ROAMS[prefs.roamIndex] ?? 'calm' });
+          else if (key === 'scheme') Promise.resolve(body.setScheme?.(prefs.scheme)).catch(() => {});
+        }
+      };
+
       const [kit, whale, { createSfx }, { createBubble }, { createTools, TOOLS_CSS },
         { BUBBLE_CSS }, { createStatus, STATUS_CSS }, { createDress, DRESS_CSS }] = await Promise.all([
         import(`${ABS}kit/body.js`),
@@ -345,6 +374,8 @@ window.__ModuleLoader__.load({
           });
           // 定期把她的位置与在做什么送回宿主（内部做了去重，不会每帧都发）
           if ((tick++ & 15) === 0) reportState();
+          // 低频检查设置面板是否改过偏好
+          if ((tick & 31) === 0) syncPrefs();
         } catch (error) {
           console.warn('[dsh-coopanion-pet] 帧绘制失败，桌宠已停止：', error);
           stopped = true;
@@ -646,6 +677,18 @@ window.__ModuleLoader__.load({
           { name: 'shell.overlay', id: 'coopanion-pet', order: 10 },
           PetOverlay,
         ));
+
+        // 设置面板是增强项：注册失败不影响桌宠本体。
+        // 模块按需加载，避免桌宠本体等她。
+        import(`${ABS}settings.js`).then(({ createSettingsSection }) => {
+          const Section = createSettingsSection(React, { read: readPrefs, write: writePrefs });
+          ctx.slots.inject('settings.section', () => ctx.slots.register(
+            { name: 'settings.section', id: 'coopanion-pet', order: 40, label: () => '桌宠' },
+            Section,
+          ));
+        }).catch((error) => {
+          console.warn('[dsh-coopanion-pet] 设置面板注册失败，桌宠不受影响：', error);
+        });
       },
     };
   },

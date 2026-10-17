@@ -62,6 +62,8 @@ Coopanion 全部功能按「移植到 DSH Web UI 插件」的难度分级。每�
 | **用户回答回到会话** | `agent.followup` | ✅ 页面 POST 回答 → 宿主作为新消息送回会话 |
 | **桌面侧状态上报** | 同一条 POST 通道 | ✅ 位置、模式、装扮定期上报，`pet_status` 据此回答 |
 | **工具定义 schema 转换** | 无（自实现） | ✅ `lib/define-tool.js`，不依赖宿主内部包 |
+| **设置面板** | `slots.register('settings.section')` | ✅ `assets/settings.js`，设置页「桌宠」一栏 |
+| **环境提示词注入** | `systemPrompt.section` | ✅ `lib/prompt.js`，写了「什么时候不该用」 |
 
 **P2 踩过的两个坑**（记下来省得重踩）：
 
@@ -80,12 +82,17 @@ Coopanion 全部功能按「移植到 DSH Web UI 插件」的难度分级。每�
 | 功能 | 为什么 |
 | --- | --- |
 | 状态映射细化 | 目前只报「思考 / 读 / 写 / 查找 / 跑命令 / 等回答」；可细到具体文件名与工具参数 |
-| 设置面板 | 偏好仍在 `localStorage` + 右键菜单；提到 DSH 设置页需 `slots.register('settings.section')` |
-| 环境提示词注入 | 让模型知道桌宠存在；来源 `src/ENV_PROMPT.md`（49 行） |
 
 **实测注意**：验证 profile 里没有活跃会话时 `tools` 注册表为空（`tools.get('read')` 返回空、
 `schemas()` 为 0 个），但 `ctx.inject(['tools'])` 仍会触发，注册也能成功——工具是全局的，
 只是「当前没有 agent 能调用」。因此注册要走 `ctx.inject(['tools'])`，不要假设 `apply` 时刻就能拿到。
+
+另外两条实测结论：
+
+- `systemPrompt` 的读取方法是 `assemble()`，不是 `render()`；`layers` 是个对象
+  （`createLayer`/`onChange`/`global`/`scoped`），不是数组。
+- 设置面板与桌宠各持一份偏好（面板写 `localStorage`，桌宠读内存副本），因此桌宠每 32 帧
+  比对一次 `localStorage` 并同步面板能改的那几项，否则面板改了要重载才生效。
 
 ---
 

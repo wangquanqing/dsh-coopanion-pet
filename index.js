@@ -22,6 +22,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createChannel, readJson } from './lib/channel.js';
 import { createPetTools } from './lib/tools.js';
+import { PET_PROMPT } from './lib/prompt.js';
 
 /** Cordis 插件名（loader 诊断用）。 */
 export const name = 'dsh-coopanion-pet';
@@ -367,6 +368,28 @@ export async function apply(ctx) {
       }
     }
     ctx.logger?.info?.(`dsh-coopanion-pet: 已注册 ${Object.keys(defs).length} 个 pet_* 工具`);
+  });
+
+  /* ---------- 6. 环境提示词 ---------- */
+
+  // 让模型知道她存在、有哪些工具、什么时候别用。放在工具注册之后：
+  // 提示词描述的工具必须真的能用。
+  ctx.inject(['systemPrompt'], (pctx) => {
+    const systemPrompt = pctx.get('systemPrompt');
+    if (!systemPrompt || typeof systemPrompt.section !== 'function') {
+      ctx.logger?.warn?.('dsh-coopanion-pet: systemPrompt 服务不可用，提示词未注入');
+      return;
+    }
+    try {
+      systemPrompt.section({
+        name: 'ui:coopanion-pet',
+        // 排在工具说明之后：它引用上面那些 pet_* 工具的名字
+        order: systemPrompt.getSectionOrder?.('TOOLS') ?? 100,
+        text: PET_PROMPT,
+      });
+    } catch (error) {
+      ctx.logger?.warn?.('dsh-coopanion-pet: 注入提示词失败', error);
+    }
   });
 
   ctx.logger?.info?.(`dsh-coopanion-pet: 已挂载（资源 ${ROUTE}/，事件 ${EVENTS}，回传 ${REPORT}）`);

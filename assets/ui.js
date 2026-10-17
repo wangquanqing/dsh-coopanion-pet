@@ -123,23 +123,37 @@ export function createTools(els, deps) {
   /* ---------- 摆放 ---------- */
 
   /**
-   * 把按钮条摆到她身侧；`side` 是她身体中心与可及范围，来自渲染内核。
-   * 返回是否显示（她在拖动或飞行时不显示）。
+   * 把按钮条摆到她身侧。
+   *
+   * `side` 是她身体中心与可及范围（来自渲染内核）；`visible` 由调用方判断。
+   * 摆位时留出一条通往她本体的**桥接带**：按钮条不能贴着命中圆外缘，
+   * 否则鼠标从她身上移向按钮条时会穿过一段既不在她身上、也不在按钮条上的
+   * 空隙，可见性判定当场失效，按钮条在鼠标够到之前就消失了。
+   * 因此间距取 `GAP`，并让 `over()` 把这段也算作「在按钮条一侧」。
    */
+  const GAP = 10;
+
+  /** 按钮条当前的几何，供 `over()` 判断（含桥接带）。 */
+  let placed = null;
+
   function place(box, side, { visible }) {
     if (!visible) {
       bar.hidden = true;
+      placed = null;
       return;
     }
     bar.hidden = false;
     const w = bar.offsetWidth || 200, h = bar.offsetHeight || 34;
-    const reach = (side?.reach ?? 46) + 16;
+    const reach = (side?.reach ?? 46) + GAP;
     const preferRight = side.x + reach + w <= window.innerWidth - 8;
     const left = preferRight ? side.x + reach : side.x - reach - w;
+    const top = clamp(side.y - h / 2, 8, Math.max(8, window.innerHeight - h - 8));
     bar.style.left = `${clamp(left, 8, Math.max(8, window.innerWidth - w - 8))}px`;
-    bar.style.top = `${clamp(side.y - h / 2, 8, Math.max(8, window.innerHeight - h - 8))}px`;
+    bar.style.top = `${top}px`;
     // 箭头指向她
     bar.dataset.side = preferRight ? 'left' : 'right';
+    // 记下几何：命中判定要用到按钮条与桥接带的位置
+    placed = { left: clamp(left, 8, Math.max(8, window.innerWidth - w - 8)), top, w, h, side, preferRight };
   }
 
   return {
@@ -147,12 +161,31 @@ export function createTools(els, deps) {
     showMenu,
     hideMenu,
     get menuOpen() { return !menu.hidden; },
-    /** 光标是否在按钮条或菜单上：命中判定要让开，否则点不到。 */
+    /**
+     * 光标是否落在按钮条 / 菜单上，**或落在她与按钮条之间的桥接带里**。
+     *
+     * 桥接带是必需的：没有它，鼠标从她身上移向按钮条的途中会有一段
+     * 两边都不算的位置，按钮条在那时就被判为「鼠标离开」而收起来，
+     * 于是永远够不到。带子横向从按钮条内侧一直延伸到她身体中心，
+     * 纵向与按钮条同高。
+     */
     over(x, y) {
       for (const el of [bar, menu]) {
         if (el.hidden) continue;
         const r = el.getBoundingClientRect();
         if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return true;
+      }
+      // 按钮条的可见框 + 通往她的那条带
+      if (placed && !bar.hidden) {
+        const { left, top, w, h, side, preferRight } = placed;
+        const cy = top + h / 2;
+        // 纵向放宽一点，容得下手抖
+        const halfH = h / 2 + 6;
+        if (y < cy - halfH || y > cy + halfH) return false;
+        // 横向：从按钮条内侧边缘到她的身体中心
+        const from = preferRight ? side.x : left + w;
+        const to = preferRight ? left : side.x;
+        if (x >= Math.min(from, to) && x <= Math.max(from, to)) return true;
       }
       return false;
     },

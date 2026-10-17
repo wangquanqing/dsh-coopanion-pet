@@ -353,6 +353,30 @@ window.__ModuleLoader__.load({
       /** 最近一帧的命中圆，供指针判定读取。 */
       let hits = [];
 
+      /**
+       * 按钮条要现在显示吗。
+       *
+       * 判定不能只看「这一帧光标在不在她身上」：鼠标移向按钮条的途中会短暂
+       * 落在两者之间，若当场收起，按钮条永远够不到。因此：
+       * - 光标在她身上、或在按钮条的可见框/桥接带里 → 立刻显示；
+       * - 刚离开时给 `HIDE_GRACE` 毫秒的宽限，期间仍然显示；
+       * - 拖动她、她在飞行、或右键菜单开着时让位。
+       */
+      const HIDE_GRACE = 700;
+      let showUntil = 0;
+
+      const wantsTools = () => {
+        if (!layout) return false;
+        if (['drag', 'air'].includes(layout.mode) || tools.menuOpen) return false;
+        const now = performance.now();
+        const near = hovering || tools.over(lastPointer.x, lastPointer.y);
+        if (near) {
+          showUntil = now + HIDE_GRACE;
+          return true;
+        }
+        return now < showUntil;
+      };
+
       const frame = (now) => {
         if (stopped) return;
         // 标签页切回或系统休眠后 dt 会很大，cap 掉，免得她一帧冲过整个屏幕。
@@ -367,11 +391,7 @@ window.__ModuleLoader__.load({
           if (prefs.statusBubble !== false) status.step(dt);
           else status.yield();
           bubble.place(layout?.bubble ?? { x: layout?.x ?? 0, y: 0 }, layout?.facing ?? 1);
-          tools.place(layout?.box, layout?.side, {
-            // 按钮条只在鼠标靠近她时出现，平时不占地方
-            visible: !!layout && (hovering || tools.over(lastPointer.x, lastPointer.y))
-              && !['drag', 'air'].includes(layout.mode),
-          });
+          tools.place(layout?.box, layout?.side, { visible: wantsTools() });
           // 定期把她的位置与在做什么送回宿主（内部做了去重，不会每帧都发）
           if ((tick++ & 15) === 0) reportState();
           // 低频检查设置面板是否改过偏好

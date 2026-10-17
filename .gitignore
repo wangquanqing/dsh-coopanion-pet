@@ -17,3 +17,6 @@ desktop.ini
 
 # 验证产物（端到端测试的截图与脚本不随包发布）
 *.shot.png
+
+# npm 打包产物（发布到 registry，不进仓库）
+*.tgz

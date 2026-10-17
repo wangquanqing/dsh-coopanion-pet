@@ -64,17 +64,21 @@
 
 需要一个带 Web UI 的 profile（`dsh web`、DSH 桌面端，或任何含 `@deepseek-ai/dsh-web-app` 的组合）。
 
+**从 npm 装**（推荐）：
+
 ```powershell
 dsh plugin --profile <你的profile> add dsh-coopanion-pet
 ```
 
-从 GitHub 装（对应仓库最新版）：
+指定版本：`dsh plugin --profile <你的profile> add dsh-coopanion-pet@1.0.0`
+
+**从 GitHub 装**（跟仓库 main 分支）：
 
 ```powershell
 dsh plugin --profile <你的profile> add "github:wangquanqing/dsh-coopanion-pet"
 ```
 
-从本地目录装：
+**从本地目录装**：
 
 ```powershell
 dsh plugin --profile <你的profile> add "file:D:\path\to\dsh-coopanion-pet"

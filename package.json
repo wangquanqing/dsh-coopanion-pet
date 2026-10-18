@@ -1,6 +1,6 @@
 {
   "name": "dsh-coopanion-pet",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "type": "module",
   "description": "Coopanion desktop pet for DeepSeek Harness: a whale-girl mascot that speaks, moves and can be driven by the agent",
   "keywords": [

@@ -163,10 +163,11 @@
 
 另有 **v1.4**（全局说话热键 + CUA 审批），与上述四批一起提交。
 
-- **代码**：`main = 745962f`，tag `v1.8.0`，工作区干净
-- **npm**：已发布 `1.8.0`（`gitHead` 与仓库一致）
-- **验收**：从 GitHub 全新克隆、以及从 npm registry 安装，各跑过一轮真实浏览器验收，控制台零错误
-- **文档**：`FEATURES.md`（上游 80 项对照）、`standalone-research.md`、`risk-verification.md`、`tui-research.md`
+- **代码**：`main = a3178ec`（含代码审查的全部修复），tag `v1.8.0`；工作区干净
+- **npm**：`1.8.0` 是**修复前**的版本（`gitHead` = `e87ec02`）；**修复版发布为 `1.8.1`**
+- **代码审查**：对照上游逐项核查 80 项 + 修复 20 条缺陷，见 `docs/code-review.md`
+- **验收**：从 GitHub 全新克隆、以及从 npm registry 安装，各跑过真实浏览器验收，控制台零错误
+- **文档**：`FEATURES.md`（上游 80 项对照）、`code-review.md`（审查记录）、`standalone-research.md`、`risk-verification.md`、`tui-research.md`
 
 **剩余未做项**：36 / 38 / 45 / 51（你选的「跳过」，理由见 A、B 组）；
 31 / 32 / 33 / 39（你选的「搁置」，转为独立壳调研）。

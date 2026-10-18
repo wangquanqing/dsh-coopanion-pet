@@ -186,7 +186,7 @@
 dsh plugin --profile <你的profile> add dsh-coopanion-pet
 ```
 
-指定版本：`dsh plugin --profile <你的profile> add dsh-coopanion-pet@1.8.0`
+指定版本：`dsh plugin --profile <你的profile> add dsh-coopanion-pet@1.8.1`
 
 **从 GitHub 装**（跟仓库 main 分支）：
 

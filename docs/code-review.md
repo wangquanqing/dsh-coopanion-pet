@@ -1,10 +1,11 @@
-# 代码审查记录：上游 Coopanion vs dsh-coopanion-pet v1.8.0
+# 代码审查记录：上游 Coopanion vs dsh-coopanion-pet（审查 v1.8.0 → 发布 v1.8.1）
 
 > 审查日期：2026-10-18
 > 上游基准：**本机安装版** `cortico-world-desktop-pet@0.2.0`
 >   （`D:\wangq\Documents\Coopanion\resources\app\node_modules\cortico-world-desktop-pet`，
 >   `src/` 13,457 行 / 68 文件 + `web/` 466 文件）
-> 本插件：v1.8.0（`client.js` 1,856 行 + `index.js` 1,009 行 + `lib/` 8 文件 + `assets/` 28 文件）
+> 本插件：**审查对象是 v1.8.0**（`client.js` 1,856 行 + `index.js` 1,009 行 + `lib/` 8 文件 + `assets/` 28 文件）；
+> 修复后发布为 **v1.8.1**（npm 上旧的 1.8.0 是修复前的 `e87ec02`）。
 >
 > **为什么用本机安装版而不是 GitHub**：那是**你实际在运行的版本**，比仓库更贴近真实。
 > 两份的 `src/` 行数与 `FEATURES.md` 记载的完全一致（`chat.ts` 207、`packs.ts` 329、
@@ -342,7 +343,7 @@ if (!IMAGE_EXT.has(ext) && !AUDIO_EXT.has(ext)) return null;   // 只放图片/�
 | **F1** | `assets/i18n.js` | `FEATURES.md`：「每门 128 键完整」 | v1.6–v1.8 新增的 **26 键只加进 `zh`/`en`**，其余 9 门缺 → **日语等用户看新功能显示英文** | ✅ **已补齐 9 门 × 26 键**（+234 行），实测 11 门全 154 键 |
 | **F2** | `assets/mic-worklet.js` | 文件内注释：「原样取自…（未修改）」 | 实际把英文注释换成了中文 | ✅ 改成「代码逐行相同，只把注释换成中文」 |
 | **F3** | `package.json` | 「11 个 `pet_*` 工具」「中英双语」 | 实际 **12 个**工具、**11 门**语言 | ✅ 已更新 |
-| **F4** | `FEATURES.md` | 基准是 **v1.4.0**，把 v1.5–v1.8 已做的项列为「未做」 | 实际已做完 | ✅ **已重写**（见同目录 `FEATURES.md`，基准改为 v1.8.0） |
+| **F4** | `FEATURES.md` | 基准是 **v1.4.0**，把 v1.5–v1.8 已做的项列为「未做」 | 实际已做完 | ✅ **已重写**（见同目录 `FEATURES.md`，基准改为 v1.8.1） |
 | **F5** | `ROADMAP.md` | 只提到 v1.5 | 缺 v1.6–v1.8 | ✅ 已补 |
 
 **F1 的独立核实**（不采信子代理自述，我自己跑运行时求值）：

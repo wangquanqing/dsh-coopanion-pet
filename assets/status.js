@@ -7,18 +7,28 @@
  * 措辞在这里定。
  *
  * 移植自 Coopanion 的 `web/pet-app.js` 的 stepStatus/drawStatus，
- * 去掉多来源聚合与 i18n，改成单一 SSE 源。
+ * 去掉多来源聚合，改成单一 SSE 源；文案走本插件的 i18n.js。
  */
 
-/** 状态种类 → 文案与图标。图标是 24×24 的线性图形，与内核的线宽约定一致。 */
+// 别名成 `text`：这个模块里 `t` 是它自己的时钟（按帧累加的秒数），
+// 直接导入同名函数会被 createStatus 里的 `let t = 0` 遮蔽掉。
+import { t as text } from './i18n.js';
+
+/** 状态种类 → 文案键与图标。图标是 24×24 的线性图形，与内核的线宽约定一致。 */
 const KINDS = {
-  think: { label: '', icon: '<circle cx="4" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="20" cy="12" r="1.5"/>' },
-  read: { label: '正在看文件', icon: '<path d="M6 3h9l4 4v14H6zM14 3v5h5"/><path class="cpn-scan" d="M9 11h7"/>' },
-  write: { label: '正在写文件', icon: '<path d="m5 15 11-11 4 4L9 19l-5 1zM13 7l4 4M5 15l4 4"/>' },
-  search: { label: '正在查找', icon: '<circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/>' },
-  run: { label: '正在跑命令', icon: '<path d="m5 8 4 4-4 4M13 16h6"/>' },
-  work: { label: '正在忙', icon: '<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.2 2.2M16.2 16.2l2.2 2.2M5.6 18.4l2.2-2.2M16.2 7.8l2.2-2.2"/>' },
-  wait: { label: '正在等你', icon: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>' },
+  think: { key: '', icon: '<circle cx="4" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="20" cy="12" r="1.5"/>' },
+  read: { key: 'status.read', icon: '<path d="M6 3h9l4 4v14H6zM14 3v5h5"/><path class="cpn-scan" d="M9 11h7"/>' },
+  write: { key: 'status.write', icon: '<path d="m5 15 11-11 4 4L9 19l-5 1zM13 7l4 4M5 15l4 4"/>' },
+  search: { key: 'status.search', icon: '<circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/>' },
+  run: { key: 'status.run', icon: '<path d="m5 8 4 4-4 4M13 16h6"/>' },
+  work: { key: 'status.work', icon: '<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.2 2.2M16.2 16.2l2.2 2.2M5.6 18.4l2.2-2.2M16.2 7.8l2.2-2.2"/>' },
+  wait: { key: 'status.wait', icon: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>' },
+  // 语音：听与说各一个图标
+  listen: { key: 'status.listen', icon: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>' },
+  speak: { key: 'status.speak', icon: '<path d="M4 9v6h3l4 4V5L7 9z"/><path d="M15 8.5a5 5 0 0 1 0 7M18 6a8.5 8.5 0 0 1 0 12"/>' },
+  // 电脑操作（CUA）：看屏幕与动手各一个
+  screen: { key: 'status.screen', icon: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/><circle cx="12" cy="10" r="2.5"/>' },
+  control: { key: 'status.control', icon: '<path d="M5 3v6M5 15v6M12 3v10M12 19v2M19 3v3M19 12v9"/><circle cx="5" cy="12" r="2"/><circle cx="12" cy="16" r="2"/><circle cx="19" cy="9" r="2"/>' },
 };
 
 /** 造一个 24×24 的线性图标。 */
@@ -52,13 +62,13 @@ export function createStatus(els, deps) {
     }
     el.dataset.kind = next.kind;
     // 有具体对象时把它附在文案后面：「正在看文件 · config.ts」
-    const label = KINDS[next.kind]?.label ?? '';
+    const label = KINDS[next.kind]?.key ? text(KINDS[next.kind].key) : '';
     const full = next.target ? `${label} · ${next.target}` : label;
     const textEl = el.querySelector('.cpn-status-text');
     textEl.textContent = full;
     // 具体对象可能很长，气泡最多显示一行，靠 title 让人悬停能看到全文
     textEl.title = full;
-    el.setAttribute('aria-label', full || '正在工作');
+    el.setAttribute('aria-label', full || text('status.aria'));
     el.classList.remove('cpn-fading');
     el.hidden = false;
     if (pop) {

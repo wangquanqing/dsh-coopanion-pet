@@ -41,12 +41,29 @@ window.__ModuleLoader__.load({
     const EVENTS = '/api/dsh-coopanion-pet/events';
     /** 回传地址，与 index.js 的 REPORT 保持一致。 */
     const REPORT = '/api/dsh-coopanion-pet/report';
+    /** 语音识别端点，与 index.js 的 SPEECH 保持一致（可选）。 */
+    const SPEECH = '/api/dsh-coopanion-pet/speech';
+    /** 语音合成端点，与 index.js 的 TTS 保持一致（可选）。 */
+    const TTS = '/api/dsh-coopanion-pet/tts';
     /** 站立地面与窗口底边的距离。 */
     const FLOOR_GAP = 8;
 
     /** 体型档位对应的系数（渲染内核的标准值是 0.42）。 */
     const SIZES = [0.30, 0.38, 0.48];
     const ROAMS = ['calm', 'free', 'busy'];
+
+    /**
+     * 帧率档位。0 省电 / 1 平衡 / 2 流畅。
+     *
+     * `active` 是活动时（走动、说话、拖拽）的帧率上限，`rest` 是静止时的。
+     * 0 表示跟随屏幕刷新率。静止时的动画（呼吸、眨眼、头发弹簧）本来就慢，
+     * 降帧看不出来，但省下大半 CPU；活动时按屏幕刷新率画，动作才不顿。
+     */
+    const FPS = [
+      { active: 30, rest: 12 },
+      { active: 0, rest: 24 },
+      { active: 0, rest: 0 },
+    ];
 
     /** 可用的表情与动作，取自渲染内核的词表；菜单与命令行都用它。 */
     const FACES = ['neutral', 'happy', 'wink', 'love', 'shy', 'surprised', 'angry', 'sad', 'sleepy',
@@ -61,6 +78,9 @@ window.__ModuleLoader__.load({
       startShare: 0.78,
       scheme: 'deepseek-maid',
       statusBubble: true,
+      lang: 'auto',
+      trail: true,
+      fpsIndex: 1,
     };
 
     const CSS = `
@@ -79,6 +99,28 @@ window.__ModuleLoader__.load({
         /* 偏好读不出来就用默认值。 */
       }
       return out;
+    }
+
+    /**
+     * 需要重挂桌宠才能生效的偏好，拼成一个字符串。
+     *
+     * - `lang`：界面文案在模块加载时定下，只重画面板不够。
+     * - `enabled`：关掉后整层要收掉，打开后要重新挂上；设置面板承诺「改完立刻生效」。
+     *
+     * 这里不解析具体语言（那是 i18n.js 的事），只比较偏好值本身；浏览器语言在
+     * 运行期不会变，因此 `auto` 不会误触发重挂。
+     */
+    function readMountKey() {
+      let stored = null;
+      try {
+        const raw = window.localStorage.getItem(PREFS_KEY);
+        stored = raw === null ? null : JSON.parse(raw);
+      } catch (error) {
+        stored = null;
+      }
+      const lang = stored?.lang ?? 'auto';
+      const enabled = stored?.enabled !== false;
+      return `${lang}|${enabled}`;
     }
 
     function writePrefs(patch) {
@@ -105,7 +147,7 @@ window.__ModuleLoader__.load({
        * 且只同步面板能改的那几项。`apply` 里的引用都是调用时才解析，
        * 因此这个函数可以定义在它们之前。
        */
-      const SYNCED = ['sizeIndex', 'roamIndex', 'sound', 'statusBubble', 'scheme'];
+      const SYNCED = ['sizeIndex', 'roamIndex', 'sound', 'statusBubble', 'scheme', 'trail', 'fpsIndex'];
       let lastPrefsRaw = '';
       const syncPrefs = () => {
         let raw;
@@ -127,7 +169,8 @@ window.__ModuleLoader__.load({
       };
 
       const [kit, whale, { createSfx }, { createBubble }, { createTools, TOOLS_CSS },
-        { BUBBLE_CSS }, { createStatus, STATUS_CSS }, { createDress, DRESS_CSS }] = await Promise.all([
+        { BUBBLE_CSS }, { createStatus, STATUS_CSS }, { createDress, DRESS_CSS },
+        { createTrail, TRAIL_CSS }, { createVoice }, { t }] = await Promise.all([
         import(`${ABS}kit/body.js`),
         import(`${ABS}whale/figure.js`),
         import(`${ABS}sfx.js`),
@@ -136,12 +179,15 @@ window.__ModuleLoader__.load({
         import(`${ABS}bubble.css.js`),
         import(`${ABS}status.js`),
         import(`${ABS}dress.js`),
+        import(`${ABS}trail.js`),
+        import(`${ABS}voice.js`),
+        import(`${ABS}i18n.js`),
       ]);
 
       // 气泡、按钮条、状态与装扮面板的样式随桌宠一起挂载、一起卸载，避免污染宿主的样式表。
       const style = document.createElement('style');
       style.setAttribute(STYLE_ATTR, 'parts');
-      style.textContent = BUBBLE_CSS + TOOLS_CSS + STATUS_CSS + DRESS_CSS;
+      style.textContent = BUBBLE_CSS + TOOLS_CSS + STATUS_CSS + DRESS_CSS + TRAIL_CSS;
       document.head.appendChild(style);
 
       // 形象包内部按 base 解析纹理与 model.json，必须传它自己的目录（绝对 URL）。
@@ -199,6 +245,20 @@ window.__ModuleLoader__.load({
         try { window.localStorage.setItem(`${PREFS_KEY}:x`, String(Math.round(share * 1000) / 1000)); } catch (error) { /* 存不下就算了 */ }
       };
 
+      /**
+       * 一段字节 → base64。
+       *
+       * 不用 `String.fromCharCode(...bytes)`：15 秒的录音有 48 万个字节，
+       * 展开成参数会爆栈。分块转换，每块 0x8000 个字节。
+       */
+      function base64Of(bytes) {
+        let binary = '';
+        for (let i = 0; i < bytes.length; i += 0x8000) {
+          binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+        }
+        return btoa(binary);
+      }
+
       /** 往宿主回一条消息；失败只吞掉，不打扰用户。 */
       /**
        * 往宿主回一条消息。
@@ -247,6 +307,30 @@ window.__ModuleLoader__.load({
       // 对话优先：说话或提问时状态气泡让位，因此把 bubble 的忙碌当作判据。
       const status = createStatus({ el: bubbleEl }, { busy: () => bubble.busy });
 
+      /**
+       * 语音：录音（送去宿主识别）与播放（宿主合成的音频）。
+       * 两条链路都是可选的——宿主没装对应插件时端点回 501，这里静默跳过。
+       */
+      const voice = createVoice({
+        // 说话时让她的嘴动起来：录音电平没接（识别只需要能量门限），
+        // 因此这里只在真有声音进来时轻推一下嘴部动画。
+        onLevel: () => { try { body.talk(); } catch (error) { /* 未就绪就算了 */ } },
+      });
+
+      /**
+       * 走路轨迹点。锚点取她脚底正中：布局里的 x 是身体中心，
+       * y 取包围盒底边，这样点正好落在她踩过的地方。
+       */
+      const trail = createTrail({
+        anchor: () => {
+          if (!layout) return null;
+          const box = layout.box;
+          const y = box ? box.y + box.h : window.innerHeight - FLOOR_GAP;
+          return { x: layout.x, y };
+        },
+      });
+      root.appendChild(trail.root);
+
       /** 装扮面板换装后要更新偏好，这里先占位，下面接上 body。 */
       let dress = null;
 
@@ -285,13 +369,8 @@ window.__ModuleLoader__.load({
       function command(id) {
         switch (id) {
           case 'say': {
-            const lines = [
-              '我在这儿呢。',
-              '需要我帮你看点什么吗？',
-              '这会儿挺安静的。',
-              '你忙你的，我不打扰。',
-              '要不要休息一下？',
-            ];
+            // 文案每次现取：语言可能在设置面板里刚改过
+            const lines = [1, 2, 3, 4, 5].map((i) => t(`pet.line${i}`));
             bubble.say(pick(lines));
             break;
           }
@@ -354,11 +433,26 @@ window.__ModuleLoader__.load({
             if (!prefs.statusBubble) status.yield();
             break;
           }
+          case 'trail': {
+            prefs.trail = prefs.trail === false;
+            writePrefs({ trail: prefs.trail });
+            if (!prefs.trail) trail.clear();
+            break;
+          }
+          case 'fps': {
+            prefs.fpsIndex = ((prefs.fpsIndex ?? 1) + 1) % FPS.length;
+            writePrefs({ fpsIndex: prefs.fpsIndex });
+            break;
+          }
           case 'hide': {
-            writePrefs({ enabled: false });
-            bubble.say('那我先躲起来，下次见。');
-            // 等她把话说完再收起来
-            setTimeout(() => { if (!stopped) root.style.visibility = 'hidden'; }, 1600);
+            bubble.say(t('pet.bye'));
+            // 等她把话说完再落盘：显示开关一变，整层会被重挂（见 readMountKey），
+            // 当场写就会把告别话切掉。
+            setTimeout(() => {
+              if (stopped) return;
+              root.style.visibility = 'hidden';
+              writePrefs({ enabled: false });
+            }, 1600);
             break;
           }
           default: break;
@@ -446,13 +540,15 @@ window.__ModuleLoader__.load({
       };
 
       /**
-       * 帧率：活动时跟随屏幕刷新（不必更密），静止时降到 24fps。
+       * 帧率：按偏好里的档位决定活动/静止时的上限（见 FPS）。
        *
-       * 她静止时的动画（呼吸、眨眼、头发弹簧）慢，24fps 看不出差别，
-       * 但省下大半的 CPU。`moving` 由布局的 mode 与指针状态决定。
+       * 她静止时的动画（呼吸、眨眼、头发弹簧）慢，降帧看不出差别，但省下大半
+       * 的 CPU。`active` 由布局的 mode、气泡忙碌与拖拽状态决定。
        * 标签页不可见时浏览器本来就不发 rAF，不必自己处理。
+       *
+       * 档位在设置面板里改，改动经 syncPrefs 生效，不必重挂。
        */
-      const RESTING_FPS = 24;
+      const fpsOf = () => FPS[prefs.fpsIndex] ?? FPS[1];
       /** 本帧之后隔多久再画下一帧；0 表示跟着刷新率画。 */
       let dueAt = 0;
       let gapMs = 0;
@@ -478,6 +574,12 @@ window.__ModuleLoader__.load({
           if (prefs.statusBubble !== false && !isQuiet()) status.step(dt);
           else status.yield();
           bubble.place(layout?.bubble ?? { x: layout?.x ?? 0, y: 0 }, layout?.facing ?? 1);
+          // 轨迹：只有真的在走动时才落点（拖拽、跳跃不算「走过」）
+          if (prefs.trail !== false) {
+            trail.step(dt, ['walk', 'run'].includes(layout?.mode ?? ''));
+          } else {
+            trail.clear();
+          }
           tools.place(layout?.box, layout?.side, { visible: wantsTools() });
           // 定期把她的位置与在做什么送回宿主（内部做了去重，不会每帧都发）
           if ((tick++ & 15) === 0) reportState();
@@ -494,10 +596,12 @@ window.__ModuleLoader__.load({
           return;
         }
 
-        // 她在走动、被拖动、说话或做事时跟随刷新率；静下来就降帧。
+        // 她在走动、被拖动、说话或做事时用活动档；静下来用静止档。
         // `moving` 由内核给出（走路、跳跃、拖拽等），对话与状态气泡也算活动。
         const active = !!(layout?.moving || bubble.busy || status.active || dragging);
-        gapMs = active ? 0 : 1000 / RESTING_FPS;
+        const fps = fpsOf();
+        const cap = active ? fps.active : fps.rest;
+        gapMs = cap > 0 ? 1000 / cap : 0;
         // 落后超过一个间隔就重新对齐，避免补画一串迟到的帧
         dueAt = now - dueAt > gapMs ? now + gapMs : dueAt + gapMs;
 
@@ -551,6 +655,56 @@ window.__ModuleLoader__.load({
             setQuiet(minutes > 0 ? minutes * 60_000 : 0);
             return { ok: true, until: quietUntil };
           }
+          case 'listen': {
+            // 录一段话交给宿主侧的识别服务。宿主没装语音输入插件时端点回 501，
+            // 这里如实回报 'no-speech-plugin'，不假装听到。
+            if (!voice.supported) return { ok: false, reason: 'unsupported' };
+            const seconds = typeof args?.seconds === 'number' && Number.isFinite(args.seconds)
+              ? Math.max(0.5, Math.min(args.seconds, 15))
+              : 5;
+            const rec = await voice.record({ seconds });
+            if (rec.error) return { ok: false, reason: rec.error, message: rec.message };
+            let res;
+            try {
+              res = await fetch(SPEECH, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ audioBase64: base64Of(rec.wav) }),
+              });
+            } catch (error) {
+              return { ok: false, reason: 'unreachable', message: String(error?.message ?? error) };
+            }
+            let out = null;
+            try { out = await res.json(); } catch (error) { out = null; }
+            if (!res.ok || !out?.ok) {
+              return { ok: false, reason: out?.reason ?? `http-${res.status}`, message: out?.message };
+            }
+            return { ok: true, text: out.text };
+          }
+          case 'speak': {
+            // 朗读一段话：宿主代理到 dsh-xiaomi-tts 的同源路由合成，页面只负责播。
+            const text = String(args?.text ?? '').trim().slice(0, 500);
+            if (!text) return { ok: false, reason: 'no-text' };
+            let res;
+            try {
+              res = await fetch(TTS, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ text }),
+              });
+            } catch (error) {
+              return { ok: false, reason: 'unreachable', message: String(error?.message ?? error) };
+            }
+            if (!res.ok) {
+              let out = null;
+              try { out = await res.json(); } catch (error) { out = null; }
+              return { ok: false, reason: out?.reason ?? `http-${res.status}`, message: out?.message };
+            }
+            const audio = new Uint8Array(await res.arrayBuffer());
+            // 不等它播完：回执只表示「合成了并开始播」，等整段念完会把工具卡住
+            voice.play(audio, res.headers.get('content-type') ?? 'audio/wav');
+            return { ok: true, bytes: audio.byteLength };
+          }
           case 'set': {
             const patch = args?.patch ?? {};
             const applied = {};
@@ -574,6 +728,15 @@ window.__ModuleLoader__.load({
               prefs.statusBubble = patch.statusBubble;
               applied.statusBubble = prefs.statusBubble;
               if (!prefs.statusBubble) status.yield();
+            }
+            if (typeof patch.trail === 'boolean') {
+              prefs.trail = patch.trail;
+              applied.trail = prefs.trail;
+              if (!prefs.trail) trail.clear();
+            }
+            if (typeof patch.fpsIndex === 'number' && FPS[patch.fpsIndex]) {
+              prefs.fpsIndex = patch.fpsIndex;
+              applied.fpsIndex = prefs.fpsIndex;
             }
             if (Object.keys(applied).length) writePrefs(applied);
             return { ok: true, applied };
@@ -749,6 +912,12 @@ window.__ModuleLoader__.load({
         },
         /** 当前的布局快照（位置、模式、包围盒）。 */
         get layout() { return layout; },
+        /** 录一段话并交给宿主识别；宿主没装语音插件时返回 `{ ok: false, reason: 'no-speech-plugin' }`。 */
+        listen: (seconds) => runCommand('listen', { seconds }),
+        /** 让宿主合成一段话并播出。 */
+        speak: (text) => runCommand('speak', { text }),
+        /** 语音能力现在可不可用（浏览器有没有麦克风 API；插件装没装要调了才知道）。 */
+        get voiceReady() { return voice.supported; },
         dispose() {
           stopped = true;
           cancelAnimationFrame(raf);
@@ -764,6 +933,7 @@ window.__ModuleLoader__.load({
           window.removeEventListener('resize', onResize);
           tools.dispose();
           dress.dispose();
+          trail.dispose();
           bubbleEl.remove();
           style.remove();
           try {
@@ -785,6 +955,17 @@ window.__ModuleLoader__.load({
 
     /** 挂进 `shell.overlay` 的桌宠层。挂载即加载，卸载即释放；加载期间不占位，失败只告警。 */
     function PetOverlay() {
+      // 语言或显示开关一变，就把整个桌宠层重建一次（见 readMountKey）。
+      // 轮询很便宜：一次 localStorage 读，一秒一次。
+      const [mountKey, setMountKey] = React.useState(readMountKey);
+      React.useEffect(() => {
+        const timer = setInterval(() => {
+          const next = readMountKey();
+          setMountKey((prev) => (prev === next ? prev : next));
+        }, 1000);
+        return () => clearInterval(timer);
+      }, []);
+
       const hostRef = React.useRef(null);
       React.useEffect(() => {
         const host = hostRef.current;
@@ -809,7 +990,7 @@ window.__ModuleLoader__.load({
           pet?.dispose();
           if (window.__dshCoopanionPet === pet) delete window.__dshCoopanionPet;
         };
-      }, []);
+      }, [mountKey]);
       // 锚点自身不渲染内容、不接收指针：桌宠的容器由 effect 直接创建。
       return React.createElement('div', { ref: hostRef, 'aria-hidden': true });
     }

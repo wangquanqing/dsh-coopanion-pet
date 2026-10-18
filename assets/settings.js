@@ -8,12 +8,20 @@
  * 面板改完立刻生效——桌宠每帧读偏好，不必重载页面。
  *
  * 面板不依赖 DSH 的 locale / theme 服务（实测客户端插件的 apply 运行时
- * 拿不到它们），文案直接内联，配色用 CSS 变量跟随宿主主题。
+ * 拿不到它们），文案走本插件的 i18n.js，配色用 CSS 变量跟随宿主主题。
+ *
+ * 改「语言」或「显示桌宠」会重挂桌宠（见 client.js 的 readMountKey）：界面文案在
+ * 模块加载时定下，只重画面板不会跟着变；开关则要整层收掉或挂上。因此干脆
+ * 让整个桌宠层重建一次。
  */
 
-/** 体型与漫游的显示名。 */
-const SIZE_LABELS = ['小', '中', '大'];
-const ROAM_LABELS = ['安静', '随意', '活跃'];
+import { t, LANGS } from './i18n.js';
+
+/** 语言选项：自动 + 各语言的自身名（语言名不跟着界面语言变）。 */
+const LANG_NAMES = { zh: '中文', en: 'English' };
+const LANG_OPTIONS = ['auto', ...LANGS];
+/** 语言选项的显示名。每次渲染时取，免得改完语言后面板还挂着旧标签。 */
+const langLabels = () => LANG_OPTIONS.map((id) => (id === 'auto' ? t('lang.auto') : LANG_NAMES[id] ?? id));
 
 /** 行容器的样式，几处共用。 */
 const ROW = {
@@ -87,11 +95,22 @@ export function createSettingsSection(React, prefs) {
       ]);
     };
 
-    /** 一行分段选择。 */
-    const choice = (key, label, options) => {
-      const at = Number(current[key] ?? 0);
+    /**
+     * 一行分段选择。
+     *
+     * `values` 是各档位存进偏好的值；不给时按 0..n-1 存（体型、漫游是索引）。
+     */
+    const choice = (key, label, options, values, hint) => {
+      const list = values ?? options.map((_, i) => i);
+      const at = list.indexOf(current[key]);
       return h('div', { key, style: ROW }, [
-        h('span', { key: 'l' }, label),
+        h('span', { key: 'l', style: { display: 'flex', flexDirection: 'column', gap: '2px' } }, [
+          h('span', { key: 'n' }, label),
+          hint ? h('span', {
+            key: 'h',
+            style: { color: 'var(--dsw-alias-label-secondary, #6A6577)', fontSize: '12px' },
+          }, hint) : null,
+        ]),
         h('span', { key: 'g', style: { display: 'flex', flex: 'none', gap: '4px' } },
           options.map((name, i) => h('button', {
             key: name,
@@ -107,7 +126,7 @@ export function createSettingsSection(React, prefs) {
               fontSize: '12.5px',
               padding: '4px 10px',
             },
-            onClick: (event) => { event.preventDefault(); event.stopPropagation(); set({ [key]: i }); },
+            onClick: (event) => { event.preventDefault(); event.stopPropagation(); set({ [key]: list[i] }); },
           }, name))),
       ]);
     };
@@ -118,12 +137,15 @@ export function createSettingsSection(React, prefs) {
       h('p', {
         key: 'intro',
         style: { color: 'var(--dsw-alias-label-secondary, #6A6577)', fontSize: '12.5px', margin: '0 0 4px' },
-      }, '一只住在界面下沿的桌宠。形象与动画来自 Coopanion。'),
-      toggle('enabled', '显示桌宠', '关掉后页面里不再出现她'),
-      toggle('statusBubble', '状态气泡', '她头顶显示「正在看文件」「正在跑命令」'),
-      toggle('sound', '音效', '全部为合成音，不含音频素材'),
-      choice('sizeIndex', '体型', SIZE_LABELS),
-      choice('roamIndex', '漫游', ROAM_LABELS),
+      }, t('settings.intro')),
+      toggle('enabled', t('settings.enabled'), t('settings.enabledHint')),
+      toggle('statusBubble', t('settings.statusBubble'), t('settings.statusBubbleHint')),
+      toggle('sound', t('settings.sound'), t('settings.soundHint')),
+      toggle('trail', t('settings.trail'), t('settings.trailHint')),
+      choice('sizeIndex', t('settings.size'), [0, 1, 2].map((i) => t(`size.${i}`))),
+      choice('roamIndex', t('settings.roam'), [0, 1, 2].map((i) => t(`roam.${i}`))),
+      choice('fpsIndex', t('settings.fps'), [0, 1, 2].map((i) => t(`fps.${i}`)), undefined, t('settings.fpsHint')),
+      choice('lang', t('settings.lang'), langLabels(), LANG_OPTIONS, t('settings.langHint')),
     ]);
   };
 }

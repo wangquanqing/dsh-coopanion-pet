@@ -8,16 +8,18 @@
  * 命中判定只在光标落在她本体上时才拦事件，所以点按钮不会被拦下。
  */
 
+import { t, sizeLabel, roamLabel, fpsLabel } from './i18n.js';
+
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 /** 按钮条上的一排动作。`run` 是点了之后做什么。 */
 const BUTTONS = [
-  { id: 'say', icon: '💬', title: '让她说句话' },
-  { id: 'face', icon: '🎭', title: '换个表情' },
-  { id: 'act', icon: '🤸', title: '做个动作' },
-  { id: 'walk', icon: '🚶', title: '走两步' },
-  { id: 'dress', icon: '👗', title: '装扮' },
-  { id: 'sleep', icon: '😴', title: '睡觉 / 叫醒' },
+  { id: 'say', icon: '💬', key: 'tool.say' },
+  { id: 'face', icon: '🎭', key: 'tool.face' },
+  { id: 'act', icon: '🤸', key: 'tool.act' },
+  { id: 'walk', icon: '🚶', key: 'tool.walk' },
+  { id: 'dress', icon: '👗', key: 'tool.dress' },
+  { id: 'sleep', icon: '😴', key: 'tool.sleep' },
 ];
 
 /**
@@ -34,7 +36,7 @@ export function createTools(els, deps) {
   bar.className = 'cpn-tools';
   bar.hidden = true;
   bar.setAttribute('role', 'toolbar');
-  bar.setAttribute('aria-label', '桌宠操作');
+  bar.setAttribute('aria-label', t('tool.bar'));
 
   const menu = document.createElement('div');
   menu.className = 'cpn-menu';
@@ -46,8 +48,8 @@ export function createTools(els, deps) {
     el.type = 'button';
     el.className = 'cpn-tool';
     el.dataset.cmd = b.id;
-    el.title = b.title;
-    el.setAttribute('aria-label', b.title);
+    el.title = t(b.key);
+    el.setAttribute('aria-label', t(b.key));
     el.textContent = b.icon;
     el.addEventListener('click', (e) => {
       e.preventDefault();
@@ -60,14 +62,16 @@ export function createTools(els, deps) {
   /* ---------- 菜单 ---------- */
 
   const MENU_ITEMS = [
-    { id: 'dress', label: () => '装扮…' },
-    { id: 'status', label: () => (getPref('statusBubble') === false ? '开启状态气泡' : '关闭状态气泡') },
-    { id: 'sound', label: () => (getPref('sound') ? '关闭音效' : '开启音效') },
-    { id: 'size', label: () => `体型：${['小', '中', '大'][getPref('sizeIndex') ?? 1]}` },
-    { id: 'roam', label: () => `漫游：${['安静', '随意', '活跃'][getPref('roamIndex') ?? 0]}` },
+    { id: 'dress', label: () => t('menu.dress') },
+    { id: 'status', label: () => t(getPref('statusBubble') === false ? 'menu.statusOn' : 'menu.statusOff') },
+    { id: 'sound', label: () => t(getPref('sound') ? 'menu.soundOff' : 'menu.soundOn') },
+    { id: 'size', label: () => t('menu.size', { v: sizeLabel(getPref('sizeIndex') ?? 1) }) },
+    { id: 'roam', label: () => t('menu.roam', { v: roamLabel(getPref('roamIndex') ?? 0) }) },
+    { id: 'fps', label: () => t('menu.fps', { v: fpsLabel(getPref('fpsIndex') ?? 1) }) },
+    { id: 'trail', label: () => t(getPref('trail') === false ? 'menu.trailOn' : 'menu.trailOff') },
     { id: 'sep' },
-    { id: 'home', label: () => '回到原位' },
-    { id: 'hide', label: () => '隐藏桌宠' },
+    { id: 'home', label: () => t('menu.home') },
+    { id: 'hide', label: () => t('menu.hide') },
   ];
 
   function buildMenu() {

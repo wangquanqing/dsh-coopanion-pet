@@ -46,10 +46,10 @@ Coopanion 全部功能按「移植到 DSH Web UI 插件」的难度分级。每�
 
 **仍未做的**：
 
-| 功能 | 为什么往后放 |
+| 功能 | 状态 |
 | --- | --- |
-| i18n | 形象名已带 11 语言；界面文案目前只有中文 |
-| 装扮页的高级项 | 上游还支持导入第三方形象包（zip/文件夹），需要文件选择与沙箱加载 |
+| i18n | ✅ 已做（v1.2）：界面文案中/英两套，默认跟随浏览器语言，设置面板可指定，改完即时重挂。上游的 11 语言里其余 9 门没搬——词表是自写的，加语言只要往 `assets/i18n.js` 的 `DICT` 里补一列 |
+| 装扮页的高级项 | 仍未做。上游还支持导入第三方形象包（zip/文件夹），需要文件选择与沙箱加载 |
 
 ---
 
@@ -81,7 +81,7 @@ Coopanion 全部功能按「移植到 DSH Web UI 插件」的难度分级。每�
 
 | 功能 | 为什么 |
 | --- | --- |
-| 状态映射细化 | 目前只报「思考 / 读 / 写 / 查找 / 跑命令 / 等回答」；可细到具体文件名与工具参数 |
+| 状态映射细化 | ✅ 已补（v1.3）：「听 / 朗读 / 看屏幕 / 操作电脑」四类，覆盖语音与 CUA 工具；仍可再细 |
 
 **实测注意**：验证 profile 里没有活跃会话时 `tools` 注册表为空（`tools.get('read')` 返回空、
 `schemas()` 为 0 个），但 `ctx.inject(['tools'])` 仍会触发，注册也能成功——工具是全局的，
@@ -96,17 +96,22 @@ Coopanion 全部功能按「移植到 DSH Web UI 插件」的难度分级。每�
 
 ---
 
-## P3 🔴 需要宿主能力
+## P3 🟡 借宿主能力（部分已完成）
 
-| 功能 | 障碍 | 可能的出路 |
+| 功能 | 状态 | 做法 |
 | --- | --- | --- |
-| **麦克风采集** | 只是 `getUserMedia` + AudioWorklet（36 行），本身不难 | 但消费端（ASR）是障碍，见下 |
-| **语音识别（ASR）** | 依赖 `sherpa-onnx-node` 原生模块 + 240/375MB 模型；或 Windows SAPI 常驻 PowerShell | 接 DSH 已有的语音输入插件（`dsh-experimental-voice-input-bundle`），别自己搬 |
-| **全局说话热键** | 用 `koffi` FFI 轮询 `GetAsyncKeyState`，浏览器拿不到 | 改成页内快捷键；全局热键交给 Electron 宿主 |
-| **对话页** | `src/chat.ts` 依赖事件库游标分页、附件存储、pending 提升/撤回 | DSH 已有完整会话 UI，没必要搬；改为让桌宠读 DSH 的会话状态 |
+| **麦克风采集** | ✅ v1.3 | `getUserMedia` + AudioWorklet（`assets/mic-worklet.js`，原样取自上游），录成 16kHz 单声道 PCM16 并封成 WAV |
+| **语音识别（ASR）** | ✅ v1.3 | **不自己搬**。接 DSH 的 `speechToText` 宿主服务（`dsh-experimental-voice-input-bundle`），页面只把 WAV 交给 `pet_listen` 的宿主端点。未装时安全跳过 |
+| **语音合成（TTS）** | ✅ v1.3 | **不自己搬**。宿主代理到 [dsh-xiaomi-tts](https://github.com/ppy-web/dsh-plugin-xiaomi-mimo-tts) 注册的同源路由 `/plugins/xiaomi-mimo-tts/synthesize`，页面只负责播。未装时安全跳过 |
+| **切句器（segmenter）** | 未搬 | 上游 `src/asr/segmenter.ts`（310 行「两级都是纯逻辑」）。**当前不需要**：DSH 的识别接口收的是**整段 WAV**，切句由录音时长与调用方决定，不在插件里做流式切分。若将来要做「边听边识别」再搬 |
+| **全局说话热键** | 未做 | 用 `koffi` FFI 轮询 `GetAsyncKeyState`，浏览器拿不到。改成页内快捷键；全局热键交给 Electron 宿主 |
+| **对话页** | 不搬 | `src/chat.ts` 依赖事件库游标分页、附件存储、pending 提升/撤回；DSH 已有完整会话 UI |
 
-**可捡的便宜**：`src/asr/segmenter.ts`（310 行切句器 + 打包器）文件头明确写「两级都是纯逻辑」，
-可原样移植，将来接任何 ASR 都用得上。`src/asr/result.ts`（幻觉过滤）同理。
+**可选性的实现方式（重要）**：语音这两条**都不写进 cordis 的 `inject`**。
+`inject` 是必需依赖，缺一个整插件就加载不了；语音是锦上添花，装不装都不该挡住桌宠。
+因此用**运行期探测**：宿主侧 `ctx.get('speechToText')` 在就给函数、不在就返回 `null`；
+TTS 只看它注册的同源路由在不在（路由是公开契约，也是真正要用的东西）。
+两者在不可用时都回 `501` 与一句「装什么」，页面据此安全跳过。
 
 ---
 
@@ -116,7 +121,7 @@ Coopanion 全部功能按「移植到 DSH Web UI 插件」的难度分级。每�
 
 | 功能 | 为什么不行 |
 | --- | --- |
-| **电脑操作（CUA，10 个工具）** | 需要子进程 + `koffi` + 三平台原生输入（`src/cua/`）。除非改由 DSH 宿主侧提供，插件只留 UI 与权限政策层 |
+| **电脑操作（CUA，10 个工具）** | 需要子进程 + `koffi` + 三平台原生输入（`src/cua/`）。**但 DSH 侧已经有人做了**：见下节 |
 | **透明置顶窗口、鼠标穿透租约** | `host/electron-main.cjs`（511 行）。Web 页面没有窗口概念 |
 | **托盘、跨屏跟随、OBS 叠加** | 同上 |
 | **屏幕采样光晕** | GDI 屏幕采样，Electron 专属 |
@@ -124,6 +129,36 @@ Coopanion 全部功能按「移植到 DSH Web UI 插件」的难度分级。每�
 **有价值的部分**：`src/cua/cua.ts` 的权限政策层（四级权限 + 让位空闲检测）设计是通用的，
 如果将来 DSH 侧要做 CUA，这套政策可以直接照搬；只有「空闲检测」依赖原生
 `GetLastInputInfo`，浏览器里只能近似。
+
+### CUA：接入已有的 DSH 插件，不自己实现 `[已验证]`
+
+**结论：接 [dsh-computer-use-win](https://github.com/Yu-tao-Li/dsh-computer-use-win)，本插件只做「认得它在干什么」这一层。**
+
+核对过它的实现（本机桌面 profile 里装的是 `dsh-computer-use-win@0.4.1`）：
+
+| 事实 | 证据 |
+| --- | --- |
+| 它是 MCP 服务，经官方桥接挂进 DSH | `cordis.patch.yml` 里是 `name: 'dsh-computer-use-win/mcp/dsh-plugin.mjs'`，内部 `await import('@deepseek-ai/dsh-mcp-client')` |
+| 模型看到的工具名是 `mcp__wincu__<tool>` | 桥接的命名规则是 `mcp__<serverName>__<rawName>`，它配的 `serverName: 'wincu'` |
+| 能力覆盖 23 个工具 | `server.mjs` 里 `windows_computer_use_` 前缀的定义：snapshot / accessibility_tree / find / click / type_text / ocr / screenshot / wait_for … |
+| 已有精简模式 | `mode: lite`（9 个常用工具 + 1 个发现入口，9,046 字符）与 `full`（23 个，20,259 字符） |
+| 权限与生命周期归官方桥接 | 它的 `apply` 只做配置与模式切换，连接所有权「保持在官方桥接上，不自己再写一个 MCP 客户端」 |
+
+**因此不自己实现，理由三条**：
+
+1. **它是宿主能力，插件拿不到。** 上游 Coopanion 的 `src/cua/` 要子进程 + `koffi` + 三平台原生输入；
+   浏览器插件没有子进程。dsh-computer-use-win 走的是 MCP + PowerShell UIA，天然在宿主侧。
+2. **重做一遍没有增量。** 上游那套 CUA 的价值在**权限政策层**（四级权限 + 让位空闲检测），
+   而「有没有空闲」靠原生 `GetLastInputInfo`，浏览器只能近似。DSH 侧要做也该在宿主侧做。
+3. **本插件能贡献的正是它缺的那一环：表现层。** 它没有桌面形象，用户在它跑的时候看不见「它在干什么」。
+
+**本插件实际做的事（v1.3）**：状态气泡认得 `mcp__wincu__*`，归成两类并给出图标与文案——
+
+- `snapshot / accessibility_tree / find / element_info / screenshot / ocr / list_windows` → **正在看屏幕**
+- `click / double_click / move / drag / scroll / type_text / keypress / focus / invoke / set_value` → **正在操作电脑**
+
+并且从参数里取具体对象（`title` / `window` / `text` / `name`），气泡显示成「正在操作电脑 · 记事本」。
+**没有新增任何工具、没有改它的配置**——它装不装、开不开，桌宠都照常工作。
 
 ---
 

@@ -32,6 +32,20 @@
 - **2 套服装**：女仆装、冬装
 - 面板可拖动，位置会记住
 
+**走路足迹与帧率**
+
+- 她走动时身后留一串**渐隐的脚印**（右键菜单或设置面板可关）
+- **帧率三档**：省电（静止 12fps / 活动 30fps）、平衡（静止 24fps）、流畅（跟随屏幕）
+- 静止时自动降帧——呼吸、眨眼这类慢动画看不出来，但省下大半 CPU
+
+**多语言**
+
+- 界面文案有 **中文 / 英文** 两套：按钮条、右键菜单、装扮面板、状态气泡、设置面板
+- 默认**自动跟随浏览器语言**（zh\* → 中文，其余先落英文），也能在设置面板里手动指定
+- 改完语言**立刻重挂桌宠**，不必刷新页面——界面文案在模块加载时定下，
+  因此语言（与「显示桌宠」开关）一变就重建整层
+- 配色名（DeepSeek、Claude…）是品牌名，不翻译
+
 **Agent 能指挥她（P2）**
 
 装了本插件后，Agent 多了 6 个工具，可以在对话中直接让她做事：
@@ -45,9 +59,27 @@
 | `pet_dress` | 换配色或服装 |
 | `pet_status` | 查她现在在不在、在哪、在做什么 |
 | `pet_quiet` | 让她安静 N 分钟：关音效、不走动、状态气泡让位，到时自动恢复。不动用户的偏好 |
-| `pet_set` | 改她自己的体型、漫游倾向、音效、状态气泡开关 |
+| `pet_set` | 改她自己的体型、漫游倾向、音效、状态气泡、走路足迹、帧率 |
+| `pet_listen` | 录一小段话，交给 DSH 的语音输入插件识别，返回文字（可选，见下） |
+| `pet_speak` | 用真实语音朗读一小段话（可选，见下） |
 
 她不在（没有页面打开）时，工具会如实回报 `offline` 而不是假装成功。
+
+**语音（可选，不声明为必需依赖）**
+
+`pet_listen` 与 `pet_speak` 是**条件可用**的：宿主装了对应插件就能用，没装就如实回报、不假装成功，
+也不会因此让桌宠本体加载失败——这两个能力**不写进插件的 `inject`**（`inject` 是必需依赖，缺一个整插件就加载不了）。
+
+| 能力 | 接的是什么 | 未装时的表现 |
+| --- | --- | --- |
+| 听（识别） | DSH 自带的 `@deepseek-ai/dsh-experimental-voice-input-bundle`（SenseVoice 本地识别） | `pet_listen` 返回 `no-speech-plugin`，并说明装什么 |
+| 说（合成） | [dsh-xiaomi-tts](https://github.com/ppy-web/dsh-plugin-xiaomi-mimo-tts) 注册的同源路由 | `pet_speak` 返回 `no-tts-plugin`，并说明装什么 |
+
+识别**不自己搬 ASR**：DSH 的 `speechToText` 是宿主侧服务，浏览器端插件运行时拿不到
+（客户端插件只有 `slots`/`connection`/`loader`/`modules`），因此由宿主半边调它，页面只负责录 WAV。
+合成则绕宿主一圈：路由本来就能直接 POST，但走宿主能给出「没装那个插件」这句人话，而不是让页面拿到 404 去猜。
+
+**不需要读它们的配置、也不需要 API key**：识别用宿主已选好的识别器，合成由 TTS 插件自己去调上游。
 
 **她记得自己站哪儿**
 
@@ -55,7 +87,7 @@
 
 **设置面板与提示词（P2）**
 
-- 设置页多出一栏「桌宠」：显示开关、状态气泡、音效、体型、漫游——改完立刻生效，不必重载
+- 设置页多出一栏「桌宠」：显示开关、状态气泡、音效、体型、漫游、语言——改完立刻生效，不必重载
 - 系统提示词里多一段，告诉模型她存在、有哪些工具、**什么时候不该用**
   （不要为了让她说话而每轮都调用一次工具，她是背景陪伴不是旁白）
 
@@ -71,7 +103,7 @@
 dsh plugin --profile <你的profile> add dsh-coopanion-pet
 ```
 
-指定版本：`dsh plugin --profile <你的profile> add dsh-coopanion-pet@1.0.0`
+指定版本：`dsh plugin --profile <你的profile> add dsh-coopanion-pet@1.3.0`
 
 **从 GitHub 装**（跟仓库 main 分支）：
 
@@ -100,18 +132,21 @@ dsh plugin --profile <你的profile> add "file:D:\path\to\dsh-coopanion-pet"
 | 宿主 | `lib/channel.js` | 双向通道：命令编号、下发、等回执、超时兜底、离线判定 |
 | 宿主 | `lib/tools.js` | 六个 `pet_*` 工具的定义与执行 |
 | 宿主 | `lib/define-tool.js` | 把属性级 `required: true` 转成标准 JSON Schema（见下） |
+| 宿主 | `lib/optional.js` | 可选接缝：探测语音识别服务与 TTS 路由，不可用时返回 `null` |
 | 客户端 | `client.js` | `shell.overlay` 插槽里的桌宠，跑 WebGL 循环，收命令、发回执 |
 
 路由用 `prefix` 而非 `exact`，因为形象包内部有相对路径导入（`whale/figure.js` → `../kit/rig.js`、
 纹理 `tex/*.png`），只有路径形式的 URL 才能让浏览器按相对关系解析成功。
 
-### 三个 HTTP 端点
+### 五个 HTTP 端点
 
 | 端点 | 方向 | 用途 |
 | --- | --- | --- |
 | `/api/dsh-coopanion-pet/assets/*` | 宿主 → 浏览器 | 渲染内核、形象包、纹理 |
 | `/api/dsh-coopanion-pet/events` | 宿主 → 浏览器（SSE） | 运行状态；Agent 下发的命令 |
 | `/api/dsh-coopanion-pet/report` | 浏览器 → 宿主（POST） | 命令回执、用户回答、桌面侧状态 |
+| `/api/dsh-coopanion-pet/speech` | 浏览器 → 宿主（POST） | 录音（base64 WAV）→ 识别文字；没装语音插件时回 501 |
+| `/api/dsh-coopanion-pet/tts` | 浏览器 → 宿主（POST） | 文字 → 合成音频；没装 TTS 插件时回 501 |
 
 不用 DSH 的 RPC 做上下行：本插件只需要「推一件事、回一件事」，自己的路由更直接，
 也不依赖宿主内部接口的稳定性。
@@ -155,6 +190,10 @@ assets/
 ├── bubble.css.js   气泡样式，配色对接 DSH 主题令牌
 ├── status.js       状态气泡：接 SSE，让位于对话（移植自 pet-app.js 的 stepStatus）
 ├── dress.js        装扮面板：配色与服装切换（新写）
+├── i18n.js         界面文案的中英词表（新写）
+├── trail.js        走路足迹（移植自 pet-app.js 的 trail 段，去掉对话栈后重写）
+├── voice.js        录音（WAV 封装）与合成音频播放（新写）
+├── mic-worklet.js  麦克风采集 worklet（原样取自 Coopanion）
 ├── ui.js           悬停按钮条与右键菜单（新写，上游这些由 World 协议驱动）
 └── ../lib/         宿主半边（通道、工具定义）
 ```
@@ -257,6 +296,34 @@ assets/
 | 状态气泡显示具体对象 | 通过 —— `正在看文件 · config.ts`；`a.ts → b.ts` 切换会重绘 |
 | 静止降帧省电 | 通过 —— 静止 48 次画布变化/2s（≈24fps），活动时 123 次/1.5s（≈82fps） |
 
+**v1.2 多语言**（真实浏览器，Edge headless + SwiftShader）：
+
+| 项 | 结果 |
+| --- | --- |
+| 自动跟随浏览器语言 | 通过 —— 浏览器 `zh-CN` 时按钮条为「让她说句话/换个表情/…」 |
+| 切到英文 | 通过 —— 偏好改 `lang: en` 后重挂，按钮条变 `Say something / Change expression / …`，装扮面板变 `Dress up / Colours / Outfit / Maid / Winter cape` |
+| 状态气泡两语 | 通过 —— 中：`正在看文件 · config.ts`、`正在跑命令 · pnpm test`；英：`Reading a file · config.ts`、`Running a command · pnpm test`（六档全对） |
+| 提问气泡 | 通过 —— 自填框 `Say something else…` / 按钮 `Send` |
+| 设置面板语言行 | 通过 —— 「桌宠」栏有「语言」一行（自动/中文/English），点 English 后偏好落盘 `zh → en` 且整层重挂，面板标签同时变英文 |
+| 显示开关即时生效 | 通过 —— 设置面板置 `enabled: false` 后层与画布归零；置回 `true` 后重新挂上并画出 5369 个不透明像素 |
+| 「隐藏桌宠」仍说告别话 | 通过 —— 菜单点「隐藏桌宠」后气泡出现「那我先躲起来，」，约 1.6 秒后收起并落盘 `enabled: false` |
+| 渲染回归 | 通过 —— 126×126 画布、约 5.2k 不透明像素，相隔 900ms 两次采样不同（画面在动） |
+| 控制台错误 | 无 |
+
+**v1.3 足迹、帧率与可选语音**（真实浏览器，Edge headless + SwiftShader）：
+
+| 项 | 结果 |
+| --- | --- |
+| 走路足迹 | 通过 —— 走之前 0 个点；走动中稳定 3 个点，位置与透明度随帧衰减（`701px,0.57` → `659px,0.76` → `617px,0.94`） |
+| 关掉足迹 | 通过 —— `trail: false` 后连续采样可见点恒为 0 |
+| 帧率：静止 | 通过 —— 省电 12fps、平衡 24fps、流畅 61fps（与档位表一致） |
+| 帧率：走动 | 通过 —— 省电 30fps、平衡 61fps、流畅 61fps |
+| 设置面板新行 | 通过 —— 新增「走路足迹」「帧率」两行，八行齐全 |
+| 语音识别（装了语音插件） | 通过 —— 用 TTS 合成一句真语音喂给假麦克风，`pet_listen` 认出「你好，我是捉宠，请听我说一句话。」（原文「桌宠」被识别成「捉宠」，属识别器本身的误差） |
+| 语音合成（装了 TTS 插件） | 通过 —— `pet_speak` 拿回 99884 字节 `audio/wav`，RIFF 头正确 |
+| 未装语音插件 | 通过 —— `pet_listen` → `no-speech-plugin`、`pet_speak` → `no-tts-plugin`，都带一句「装什么」；桌宠本体照常渲染（5908 个不透明像素）且能说话 |
+| 工具层 | 通过 —— 10 个工具注册；`pet_listen`/`pet_speak` 的 schema 转换、在线回执、离线、超时、空文本、越界参数逐条核对 |
+
 **未验到的部分（如实说明）**：工具的端到端验证用的是「扮演页面的客户端」而非真实浏览器标签页——
 因为探针在服务启动后几秒就开始轮询，而浏览器要十几秒才把桌宠加载完并连上 SSE，两者的时序在这个
 验证环境里总是错开。因此「SSE 命令帧真的会让浏览器里的她说话/走路」这一段，是由以下两点合并支撑的：
@@ -270,7 +337,7 @@ assets/
 
 ```json
 { "enabled": true, "sizeIndex": 1, "roamIndex": 0, "sound": true,
-  "startShare": 0.78, "scheme": "deepseek-maid", "statusBubble": true }
+  "startShare": 0.78, "scheme": "deepseek-maid", "statusBubble": true, "lang": "auto" }
 ```
 
 | 键 | 含义 |
@@ -282,6 +349,9 @@ assets/
 | `startShare` | 初始横向位置，占窗口宽度的比例 |
 | `scheme` | 装扮，`配色-服装`，如 `claude-maid`、`deepseek-cape` |
 | `statusBubble` | 是否显示状态气泡 |
+| `lang` | 界面语言：`auto` 跟随浏览器，或 `zh` / `en` 显式指定 |
+| `trail` | 是否显示走路足迹 |
+| `fpsIndex` | 帧率档位：`0` 省电 / `1` 平衡 / `2` 流畅 |
 | `dressPos` | 装扮面板的位置（拖动后记下） |
 
 ### 从页面里驱动她

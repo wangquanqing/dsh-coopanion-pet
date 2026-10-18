@@ -6,7 +6,11 @@
  * 那一套纹理并上传到 WebGL，因此面板上给个「正在换」的反馈。
  *
  * 面板挂在桌宠旁边，可拖动标题栏移动；关闭后记住位置。
+ *
+ * 文案走 i18n.js；配色名（DeepSeek、Claude…）是品牌名，不翻译。
  */
+
+import { t } from './i18n.js';
 
 /** 各套配色的显示名与主色（主色用于色块，取自 model.json 的 accent）。 */
 const SCHEMES = [
@@ -22,8 +26,8 @@ const SCHEMES = [
 
 /** 两套服装。`cape` 是冬装。 */
 const OUTFITS = [
-  { id: 'maid', name: '女仆装' },
-  { id: 'cape', name: '冬装' },
+  { id: 'maid', key: 'outfit.maid' },
+  { id: 'cape', key: 'outfit.cape' },
 ];
 
 /**
@@ -39,24 +43,24 @@ export function createDress(deps) {
   root.className = 'cpn-dress';
   root.hidden = true;
   root.setAttribute('role', 'dialog');
-  root.setAttribute('aria-label', '装扮');
+  root.setAttribute('aria-label', t('dress.aria'));
 
   root.innerHTML = `
     <header class="cpn-dress-head">
-      <span class="cpn-dress-title">装扮</span>
-      <button type="button" class="cpn-dress-close" aria-label="关闭">×</button>
+      <span class="cpn-dress-title">${t('dress.title')}</span>
+      <button type="button" class="cpn-dress-close" aria-label="${t('dress.close')}">×</button>
     </header>
     <div class="cpn-dress-body">
       <div class="cpn-dress-row">
-        <span class="cpn-dress-label">配色</span>
+        <span class="cpn-dress-label">${t('dress.scheme')}</span>
         <div class="cpn-dress-swatches" data-group="scheme"></div>
       </div>
       <div class="cpn-dress-row">
-        <span class="cpn-dress-label">服装</span>
+        <span class="cpn-dress-label">${t('dress.outfit')}</span>
         <div class="cpn-dress-chips" data-group="outfit"></div>
       </div>
     </div>
-    <p class="cpn-dress-hint" hidden>正在换装…</p>
+    <p class="cpn-dress-hint" hidden>${t('dress.busy')}</p>
   `;
 
   const swatches = root.querySelector('[data-group="scheme"]');
@@ -80,7 +84,7 @@ export function createDress(deps) {
     b.className = 'cpn-swatch';
     b.dataset.id = s.id;
     b.title = s.name;
-    b.setAttribute('aria-label', `配色：${s.name}`);
+    b.setAttribute('aria-label', t('dress.schemeAria', { name: s.name }));
     b.innerHTML = `<i style="background:${s.accent}"></i><span>${s.name}</span>`;
     b.addEventListener('click', () => apply({ scheme: s.id }));
     swatches.appendChild(b);
@@ -91,7 +95,7 @@ export function createDress(deps) {
     b.type = 'button';
     b.className = 'cpn-chip';
     b.dataset.id = o.id;
-    b.textContent = o.name;
+    b.textContent = t(o.key);
     b.addEventListener('click', () => apply({ outfit: o.id }));
     chips.appendChild(b);
   }

@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 import { createChannel, readJson } from './lib/channel.js';
 import { createPetTools } from './lib/tools.js';
 import { PET_PROMPT } from './lib/prompt.js';
+import { detectSpeechToText, detectTextToSpeech, TTS_ROUTE, STT_PACKAGE } from './lib/optional.js';
 
 /** Cordis 插件名（loader 诊断用）。 */
 export const name = 'dsh-coopanion-pet';
@@ -36,9 +37,14 @@ export const ROUTE = '/api/dsh-coopanion-pet/assets';
 export const EVENTS = '/api/dsh-coopanion-pet/events';
 /** 页面回传消息的地址；client.js 里的 POST 必须与此保持一致。 */
 export const REPORT = '/api/dsh-coopanion-pet/report';
+/** 页面把录到的 WAV 送来这里识别（可选：宿主没装语音输入插件时返回 501）。 */
+export const SPEECH = '/api/dsh-coopanion-pet/speech';
+/** 页面把要朗读的文字送来这里合成（可选：宿主没装 TTS 插件时返回 501）。 */
+export const TTS = '/api/dsh-coopanion-pet/tts';
 
 const MIME = {
   '.css': 'text/css; charset=utf-8',
+  '.wav': 'audio/wav',
   '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
@@ -67,6 +73,13 @@ const TOOL_WORDS = [
   [/^subagent|^workflow$/, 'work'],
   [/^todo_write$|^create_goal|^update_goal|^get_goal/, 'write'],
   [/^ask_user_question$/, 'wait'],
+  // 语音：听与说各自成一类，气泡上分得出来
+  [/^pet_listen$|^listen$/, 'listen'],
+  [/^pet_speak$|^speak$|^tts/, 'speak'],
+  // CUA（dsh-computer-use-win 经 MCP 暴露成 mcp__wincu__*）：看屏幕、点鼠标、
+  // 敲键盘——对用户来说就是「在操作电脑」，因此归成一类，气泡里带上具体动作。
+  [/^mcp__wincu__|^windows_computer_use|^mcp__.*__(screenshot|snapshot|ocr|find|element_info|list_windows|accessibility_tree)/, 'screen'],
+  [/^mcp__.*__(click|double_click|move|drag|scroll|type_text|keypress|focus|invoke|set_value)/, 'control'],
 ];
 
 /**
@@ -86,6 +99,11 @@ const TOOL_TARGETS = [
   ['description', 'text'],
   ['query', 'text'],
   ['url', 'text'],
+  // CUA 的参数：窗口标题、要找的控件、要敲的文字——都比工具名本身更能说明在干什么
+  ['title', 'text'],
+  ['window', 'text'],
+  ['text', 'text'],
+  ['name', 'text'],
 ];
 
 /** 一个参数值 → 可显示的短标签。 */
@@ -192,6 +210,13 @@ export async function apply(ctx) {
   let petState = { connected: false };
   /** 最近活跃的 agent。用户对提问的回答要靠它送回会话。 */
   let activeAgent = null;
+
+  /* ---------- 可选接缝 ----------
+     语音识别与语音合成都是**可选**的：对应插件没装、没就绪或已关闭时，
+     下面的对象返回 null，调用方安全跳过。因此这里不写 `inject`——`inject` 是
+     必需依赖，缺一个整插件就加载不了；语音不该挡住桌宠。 */
+  const speech = detectSpeechToText(ctx);
+  const tts = detectTextToSpeech();
 
   /**
    * 把用户对提问的回答作为一条新消息送回会话。
@@ -335,6 +360,116 @@ export async function apply(ctx) {
       },
     });
     wctx.effect(() => disposeReport, 'dsh-coopanion-pet: 回传通道');
+
+    /* ---------- 3.5 可选：语音识别与合成 ----------
+       两个端点都**只在对应能力可用时才工作**，否则回 501 与一句人话原因。
+       页面据此安全跳过——她不会因为宿主没装语音插件而报错或卡住。
+
+       为什么绕宿主而不让页面直接调：
+       - 识别：DSH 的 speechToText 是**宿主侧服务**，浏览器端拿不到（客户端插件
+         运行时只有 slots/connection/loader/modules）；官方语音输入插件也是经
+         它的 Remote 桥过来的。这里走同一套服务，不自己搬 ASR。
+       - 合成：dsh-xiaomi-tts 注册的是**同源路由**，页面本来就能直接 POST。
+         但绕宿主一圈有实际好处：路由不在时能给出「没装那个插件」这句人话，
+         而不是让页面拿到一个 404 去猜。 */
+
+    const disposeSpeech = webServer.register({
+      kind: 'exact',
+      path: SPEECH,
+      handler: async (req, res) => {
+        const fail = (code, reason, message) => {
+          res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ ok: false, reason, message }));
+        };
+        if (req.method !== 'POST') { fail(405, 'method', 'POST only'); return; }
+        if (!speech.available) {
+          fail(501, 'no-speech-plugin', `语音输入不可用：宿主里没有装上带识别能力的插件（${STT_PACKAGE}）。装好并重启后她才能听。`);
+          return;
+        }
+        let body;
+        try {
+          // 上限必须放宽：readJson 默认只收 64KB，而一段 2 秒的 16kHz 单声道
+          // PCM16 录音 base64 后就有 ~85KB，会被判成「payload too large」而把
+          // 连接直接 destroy 掉——浏览器侧表现为 ERR_EMPTY_RESPONSE（连响应都没有）。
+          // 15 秒录音 base64 约 640KB，这里给到 1.5MB；解码后的真实大小在下面另有一道校验。
+          body = await readJson(req, 1_500_000);
+        } catch (error) {
+          fail(413, 'too-large', String(error?.message ?? error));
+          return;
+        }
+        // 页面送的是 base64 的 WAV：整段录音，识别单位就是一句
+        const base64 = typeof body?.audioBase64 === 'string' ? body.audioBase64 : '';
+        if (!base64) { fail(400, 'no-audio', '缺少 audioBase64'); return; }
+        let wav;
+        try {
+          wav = Buffer.from(base64, 'base64');
+        } catch (error) {
+          fail(400, 'bad-audio', 'base64 解不开');
+          return;
+        }
+        if (!wav.byteLength) { fail(400, 'no-audio', '录音是空的'); return; }
+        // 上限：15 秒 16kHz 单声道 PCM16 约 480KB，base64 约 640KB；给一倍余量
+        if (wav.byteLength > 1_400_000) { fail(413, 'too-long', '录音太长'); return; }
+        try {
+          const text = await speech.transcribe(
+            new Uint8Array(wav),
+            typeof body?.language === 'string' ? body.language : '',
+          );
+          if (text === null) {
+            // 服务在这期间被撤掉了（插件卸载/关闭）
+            fail(503, 'no-speech-plugin', '识别服务刚被撤下，这次没听到。');
+            return;
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify({ ok: true, text }));
+        } catch (error) {
+          fail(502, 'speech-failed', String(error?.message ?? error));
+        }
+      },
+    });
+    wctx.effect(() => disposeSpeech, 'dsh-coopanion-pet: 语音识别端点');
+
+    const disposeTts = webServer.register({
+      kind: 'exact',
+      path: TTS,
+      handler: async (req, res) => {
+        const fail = (code, reason, message) => {
+          res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ ok: false, reason, message }));
+        };
+        if (req.method !== 'POST') { fail(405, 'method', 'POST only'); return; }
+        let body;
+        try {
+          body = await readJson(req);
+        } catch (error) {
+          fail(400, 'bad-json', String(error?.message ?? error));
+          return;
+        }
+        const text = typeof body?.text === 'string' ? body.text : '';
+        if (!text.trim()) { fail(400, 'no-text', '没有要读的文字'); return; }
+        // 上游默认上限 12000 字；桌宠的台词都很短，这里卡在 500 字免得被当朗读器使
+        if (text.length > 500) { fail(413, 'too-long', '一次最多 500 字'); return; }
+        // 宿主侧的 fetch 不接受相对 URL，因此按本次请求的 Host 组一个绝对地址。
+        // 用请求里的 Host 而不是写死 127.0.0.1，是因为宿主可能绑在别的地址上；
+        // 这个请求本来就是浏览器打到本宿主的，Host 必然指向它自己。
+        const host = req.headers.host ?? '127.0.0.1';
+        const audio = await tts.synthesize(text, {
+          format: typeof body?.format === 'string' ? body.format : undefined,
+          base: `http://${host}`,
+        });
+        if (!audio) {
+          fail(501, 'no-tts-plugin', `语音合成不可用：宿主里没有 ${TTS_ROUTE} 这条路由（dsh-xiaomi-tts 未装、未启用，或没配 API key）。装好并重启后她才能出声。`);
+          return;
+        }
+        res.writeHead(200, {
+          'Content-Type': audio.type,
+          'Content-Length': String(audio.audio.byteLength),
+          'Cache-Control': 'no-store',
+        });
+        res.end(Buffer.from(audio.audio));
+      },
+    });
+    wctx.effect(() => disposeTts, 'dsh-coopanion-pet: 语音合成端点');
 
     /* ---------- 4. 采集运行状态 ---------- */
 

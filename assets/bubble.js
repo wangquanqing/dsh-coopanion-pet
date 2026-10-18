@@ -11,6 +11,8 @@
  * 与「应用对话」那条支路，保留打字机、标记、选项与键盘选择。
  */
 
+import { t } from './i18n.js';
+
 const PAUSE = /[,.!?;:…，。！？；：、]/;
 const SILENT = /[\s,.!?;:…，。！？；：、「」『』()（）]/;
 const TAIL_CENTER = 70, TAIL_FOLLOW = 130;
@@ -234,7 +236,7 @@ export function createBubble(els, deps) {
     if (it.own) {
       const row = document.createElement('form');
       row.className = 'cpn-b-own';
-      row.innerHTML = '<input type="text" maxlength="200" placeholder="说点别的…"><button type="submit">发送</button>';
+      row.innerHTML = `<input type="text" maxlength="200" placeholder="${esc(t('bubble.own'))}"><button type="submit">${esc(t('bubble.send'))}</button>`;
       row.addEventListener('submit', (e) => {
         e.preventDefault();
         const input = row.querySelector('input');

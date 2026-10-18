@@ -1,0 +1,18 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<!-- 41：形象包代码的沙箱。宿主用 CSP 把这里限制成 opaque origin（不给 allow-same-origin），
+     因此包代码拿不到主页面任何东西，只能 postMessage。 -->
+<style>
+html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+#root { position: absolute; inset: 0; }
+</style>
+</head>
+<body>
+<div id="root" aria-hidden="true"></div>
+<!-- 绝对路径：这个页面在 /dsh-coopanion-pet/frame，而脚本在同前缀下的 frame/ 里。
+     相对路径会解析成 /dsh-coopanion-pet/figure-frame.js，那个路径不在路由下。 -->
+<script type="module" src="/dsh-coopanion-pet/frame/figure-frame.js"></script>
+</body>
+</html>

@@ -1,0 +1,1216 @@
+{
+  "manifest": 2,
+  "api": 2,
+  "id": "coo",
+  "version": "1.0.0",
+  "name": {
+    "zh": "Coo",
+    "en": "Coo"
+  },
+  "about": {
+    "zh": "一个小桌宠,C 形的身体,开口是嘴,两只 0 形的眼睛,底下两条短腿",
+    "en": "a little desktop pet: a C-shaped body whose opening is its mouth, two 0-shaped eyes and two short legs underneath"
+  },
+  "author": "Pal-AI-Lab",
+  "entry": "figure.js",
+  "export": "createCooBody",
+  "axes": [
+    {
+      "id": "palette",
+      "name": {
+        "zh": "配色",
+        "zh-Hant": "配色",
+        "en": "Colours",
+        "ja": "カラー",
+        "ko": "색상",
+        "fr": "Couleurs",
+        "de": "Farben",
+        "es-419": "Colores",
+        "pt-BR": "Cores",
+        "it": "Colori",
+        "ru": "Цвета"
+      },
+      "options": [
+        {
+          "id": "mint",
+          "name": {
+            "zh": "薄荷绿",
+            "zh-Hant": "薄荷綠",
+            "en": "Mint",
+            "ja": "ミント",
+            "ko": "민트",
+            "fr": "Menthe",
+            "de": "Minze",
+            "es-419": "Menta",
+            "pt-BR": "Menta",
+            "it": "Menta",
+            "ru": "Мятный"
+          }
+        },
+        {
+          "id": "mono",
+          "name": {
+            "zh": "单色",
+            "zh-Hant": "單色",
+            "en": "Mono",
+            "ja": "モノクロ",
+            "ko": "단색",
+            "fr": "Monochrome",
+            "de": "Monochrom",
+            "es-419": "Monocromo",
+            "pt-BR": "Monocromo",
+            "it": "Monocromo",
+            "ru": "Монохром"
+          }
+        },
+        {
+          "id": "navigator",
+          "name": {
+            "zh": "领航员",
+            "zh-Hant": "領航員",
+            "en": "Navigator",
+            "ja": "ナビゲーター",
+            "ko": "내비게이터",
+            "fr": "Navigateur",
+            "de": "Navigator",
+            "es-419": "Navegante",
+            "pt-BR": "Navegante",
+            "it": "Navigatore",
+            "ru": "Штурман"
+          }
+        },
+        {
+          "id": "claude",
+          "name": {
+            "zh": "克劳德",
+            "zh-Hant": "克勞德",
+            "en": "Claude"
+          }
+        },
+        {
+          "id": "fox",
+          "name": {
+            "zh": "红狐狸",
+            "zh-Hant": "紅狐狸",
+            "en": "Red Fox",
+            "ja": "アカギツネ",
+            "ko": "붉은여우",
+            "fr": "Renard roux",
+            "de": "Rotfuchs",
+            "es-419": "Zorro rojo",
+            "pt-BR": "Raposa-vermelha",
+            "it": "Volpe rossa",
+            "ru": "Рыжая лиса"
+          }
+        },
+        {
+          "id": "purple",
+          "name": {
+            "zh": "虚式茈",
+            "zh-Hant": "虛式茈",
+            "en": "Hollow Purple",
+            "ja": "虚式「茈」",
+            "ko": "허식 「자」",
+            "fr": "Violet creux",
+            "de": "Hohles Violett",
+            "es-419": "Vacío Púrpura",
+            "pt-BR": "Vazio Roxo",
+            "it": "Viola cavo",
+            "ru": "Пустотный фиолетовый"
+          }
+        },
+        {
+          "id": "lemon",
+          "name": {
+            "zh": "柠檬黄",
+            "zh-Hant": "檸檬黃",
+            "en": "Lemon",
+            "ja": "レモン",
+            "ko": "레몬",
+            "fr": "Citron",
+            "de": "Zitrone",
+            "es-419": "Amarillo limón",
+            "pt-BR": "Amarelo-limão",
+            "it": "Limone",
+            "ru": "Лимонный"
+          }
+        },
+        {
+          "id": "lantern",
+          "name": {
+            "zh": "性相：灯",
+            "zh-Hant": "性相：燈",
+            "en": "Principle: Lantern",
+            "ja": "原理：灯",
+            "ko": "원리: 등불",
+            "fr": "Principe : Lanterne",
+            "de": "Prinzip: Laterne",
+            "es-419": "Principio: Linterna",
+            "pt-BR": "Princípio: Lanterna",
+            "it": "Principio: Lanterna",
+            "ru": "Принцип: Фонарь"
+          }
+        },
+        {
+          "id": "grail",
+          "name": {
+            "zh": "性相：杯",
+            "zh-Hant": "性相：杯",
+            "en": "Principle: Grail",
+            "ja": "原理：杯",
+            "ko": "원리: 성배",
+            "fr": "Principe : Graal",
+            "de": "Prinzip: Gral",
+            "es-419": "Principio: Grial",
+            "pt-BR": "Princípio: Graal",
+            "it": "Principio: Graal",
+            "ru": "Принцип: Чаша"
+          }
+        },
+        {
+          "id": "forge",
+          "name": {
+            "zh": "性相：铸",
+            "zh-Hant": "性相：鑄",
+            "en": "Principle: Forge",
+            "ja": "原理：炉",
+            "ko": "원리: 대장간",
+            "fr": "Principe : Forge",
+            "de": "Prinzip: Schmiede",
+            "es-419": "Principio: Forja",
+            "pt-BR": "Princípio: Forja",
+            "it": "Principio: Forgia",
+            "ru": "Принцип: Кузня"
+          }
+        },
+        {
+          "id": "heart",
+          "name": {
+            "zh": "性相：心",
+            "zh-Hant": "性相：心",
+            "en": "Principle: Heart",
+            "ja": "原理：心",
+            "ko": "원리: 심장",
+            "fr": "Principe : Cœur",
+            "de": "Prinzip: Herz",
+            "es-419": "Principio: Corazón",
+            "pt-BR": "Princípio: Coração",
+            "it": "Principio: Cuore",
+            "ru": "Принцип: Сердце"
+          }
+        },
+        {
+          "id": "winter",
+          "name": {
+            "zh": "性相：冬",
+            "zh-Hant": "性相：冬",
+            "en": "Principle: Winter",
+            "ja": "原理：冬",
+            "ko": "원리: 겨울",
+            "fr": "Principe : Hiver",
+            "de": "Prinzip: Winter",
+            "es-419": "Principio: Invierno",
+            "pt-BR": "Princípio: Inverno",
+            "it": "Principio: Inverno",
+            "ru": "Принцип: Зима"
+          }
+        }
+      ]
+    },
+    {
+      "id": "head",
+      "name": {
+        "zh": "头顶",
+        "zh-Hant": "頭頂",
+        "en": "Head",
+        "ja": "頭",
+        "ko": "머리",
+        "fr": "Tête",
+        "de": "Kopf",
+        "es-419": "Cabeza",
+        "pt-BR": "Cabeça",
+        "it": "Testa",
+        "ru": "Голова"
+      },
+      "options": [
+        {
+          "id": "none",
+          "name": {
+            "zh": "无",
+            "zh-Hant": "無",
+            "en": "None",
+            "ja": "なし",
+            "ko": "없음",
+            "fr": "Aucun",
+            "de": "Keine",
+            "es-419": "Ninguno",
+            "pt-BR": "Nenhum",
+            "it": "Nessuno",
+            "ru": "Нет"
+          }
+        },
+        {
+          "id": "cat",
+          "name": {
+            "zh": "猫耳",
+            "zh-Hant": "貓耳",
+            "en": "Cat ears",
+            "ja": "猫耳",
+            "ko": "고양이 귀",
+            "fr": "Oreilles de chat",
+            "de": "Katzenohren",
+            "es-419": "Orejas de gato",
+            "pt-BR": "Orelhas de gato",
+            "it": "Orecchie da gatto",
+            "ru": "Кошачьи ушки"
+          }
+        },
+        {
+          "id": "bear",
+          "name": {
+            "zh": "熊耳",
+            "zh-Hant": "熊耳",
+            "en": "Bear ears",
+            "ja": "クマ耳",
+            "ko": "곰 귀",
+            "fr": "Oreilles d'ours",
+            "de": "Bärenohren",
+            "es-419": "Orejas de oso",
+            "pt-BR": "Orelhas de urso",
+            "it": "Orecchie da orso",
+            "ru": "Медвежьи ушки"
+          }
+        },
+        {
+          "id": "bunny",
+          "name": {
+            "zh": "兔耳",
+            "zh-Hant": "兔耳",
+            "en": "Bunny ears",
+            "ja": "うさ耳",
+            "ko": "토끼 귀",
+            "fr": "Oreilles de lapin",
+            "de": "Hasenohren",
+            "es-419": "Orejas de conejo",
+            "pt-BR": "Orelhas de coelho",
+            "it": "Orecchie da coniglio",
+            "ru": "Заячьи ушки"
+          }
+        },
+        {
+          "id": "antenna",
+          "name": {
+            "zh": "天线",
+            "zh-Hant": "天線",
+            "en": "Antenna",
+            "ja": "アンテナ",
+            "ko": "안테나",
+            "fr": "Antenne",
+            "de": "Antenne",
+            "es-419": "Antena",
+            "pt-BR": "Antena",
+            "it": "Antenna",
+            "ru": "Антенна"
+          }
+        },
+        {
+          "id": "halo",
+          "name": {
+            "zh": "光环",
+            "zh-Hant": "光環",
+            "en": "Halo",
+            "ja": "天使の輪",
+            "ko": "천사 고리",
+            "fr": "Auréole",
+            "de": "Heiligenschein",
+            "es-419": "Aureola",
+            "pt-BR": "Auréola",
+            "it": "Aureola",
+            "ru": "Нимб"
+          }
+        },
+        {
+          "id": "tophat",
+          "name": {
+            "zh": "礼帽",
+            "zh-Hant": "禮帽",
+            "en": "Top hat",
+            "ja": "シルクハット",
+            "ko": "실크햇",
+            "fr": "Haut-de-forme",
+            "de": "Zylinder",
+            "es-419": "Sombrero de copa",
+            "pt-BR": "Cartola",
+            "it": "Cilindro",
+            "ru": "Цилиндр"
+          }
+        },
+        {
+          "id": "party",
+          "name": {
+            "zh": "派对帽",
+            "zh-Hant": "派對帽",
+            "en": "Party hat",
+            "ja": "パーティー帽",
+            "ko": "파티 모자",
+            "fr": "Chapeau de fête",
+            "de": "Partyhut",
+            "es-419": "Gorro de fiesta",
+            "pt-BR": "Chapéu de festa",
+            "it": "Cappellino da festa",
+            "ru": "Праздничный колпак"
+          }
+        },
+        {
+          "id": "sailor",
+          "name": {
+            "zh": "水手帽",
+            "zh-Hant": "水手帽",
+            "en": "Sailor cap",
+            "ja": "セーラー帽",
+            "ko": "세일러 모자",
+            "fr": "Bonnet de marin",
+            "de": "Matrosenmütze",
+            "es-419": "Gorro de marinero",
+            "pt-BR": "Chapéu de marinheiro",
+            "it": "Berretto da marinaio",
+            "ru": "Бескозырка"
+          }
+        }
+      ]
+    },
+    {
+      "id": "side",
+      "name": {
+        "zh": "耳侧配件",
+        "zh-Hant": "耳側配件",
+        "en": "Side",
+        "ja": "耳元",
+        "ko": "귀 장식",
+        "fr": "Oreilles",
+        "de": "Ohren",
+        "es-419": "Orejas",
+        "pt-BR": "Orelhas",
+        "it": "Orecchie",
+        "ru": "Уши"
+      },
+      "options": [
+        {
+          "id": "none",
+          "name": {
+            "zh": "无",
+            "zh-Hant": "無",
+            "en": "None",
+            "ja": "なし",
+            "ko": "없음",
+            "fr": "Aucun",
+            "de": "Keine",
+            "es-419": "Ninguno",
+            "pt-BR": "Nenhum",
+            "it": "Nessuno",
+            "ru": "Нет"
+          }
+        },
+        {
+          "id": "headphones",
+          "name": {
+            "zh": "耳机",
+            "zh-Hant": "耳機",
+            "en": "Headphones",
+            "ja": "ヘッドホン",
+            "ko": "헤드폰",
+            "fr": "Casque",
+            "de": "Kopfhörer",
+            "es-419": "Audífonos",
+            "pt-BR": "Fones de ouvido",
+            "it": "Cuffie",
+            "ru": "Наушники"
+          }
+        },
+        {
+          "id": "feather",
+          "name": {
+            "zh": "耳羽",
+            "zh-Hant": "耳羽",
+            "en": "Feather",
+            "ja": "羽根飾り",
+            "ko": "깃털",
+            "fr": "Plume",
+            "de": "Feder",
+            "es-419": "Pluma",
+            "pt-BR": "Pena",
+            "it": "Piuma",
+            "ru": "Перо"
+          }
+        },
+        {
+          "id": "earring",
+          "name": {
+            "zh": "耳环",
+            "zh-Hant": "耳環",
+            "en": "Earring",
+            "ja": "イヤリング",
+            "ko": "귀걸이",
+            "fr": "Boucle d'oreille",
+            "de": "Ohrring",
+            "es-419": "Arete",
+            "pt-BR": "Brinco",
+            "it": "Orecchino",
+            "ru": "Серьга"
+          }
+        },
+        {
+          "id": "clip",
+          "name": {
+            "zh": "发夹",
+            "zh-Hant": "髮夾",
+            "en": "Hair clip",
+            "ja": "ヘアピン",
+            "ko": "머리핀",
+            "fr": "Barrette",
+            "de": "Haarspange",
+            "es-419": "Pasador",
+            "pt-BR": "Presilha",
+            "it": "Fermaglio",
+            "ru": "Заколка"
+          }
+        },
+        {
+          "id": "bow",
+          "name": {
+            "zh": "蝴蝶结",
+            "zh-Hant": "蝴蝶結",
+            "en": "Bow",
+            "ja": "リボン",
+            "ko": "리본",
+            "fr": "Nœud",
+            "de": "Schleife",
+            "es-419": "Moño",
+            "pt-BR": "Laço",
+            "it": "Fiocco",
+            "ru": "Бантик"
+          }
+        }
+      ]
+    },
+    {
+      "id": "glasses",
+      "name": {
+        "zh": "眼镜",
+        "zh-Hant": "眼鏡",
+        "en": "Glasses",
+        "ja": "メガネ",
+        "ko": "안경",
+        "fr": "Lunettes",
+        "de": "Brille",
+        "es-419": "Lentes",
+        "pt-BR": "Óculos",
+        "it": "Occhiali",
+        "ru": "Очки"
+      },
+      "options": [
+        {
+          "id": "none",
+          "name": {
+            "zh": "无",
+            "zh-Hant": "無",
+            "en": "None",
+            "ja": "なし",
+            "ko": "없음",
+            "fr": "Aucun",
+            "de": "Keine",
+            "es-419": "Ninguno",
+            "pt-BR": "Nenhum",
+            "it": "Nessuno",
+            "ru": "Нет"
+          }
+        },
+        {
+          "id": "round",
+          "name": {
+            "zh": "圆框",
+            "zh-Hant": "圓框",
+            "en": "Round",
+            "ja": "丸メガネ",
+            "ko": "둥근 안경",
+            "fr": "Rondes",
+            "de": "Rund",
+            "es-419": "Redondos",
+            "pt-BR": "Redondos",
+            "it": "Tondi",
+            "ru": "Круглые"
+          }
+        },
+        {
+          "id": "square",
+          "name": {
+            "zh": "方框",
+            "zh-Hant": "方框",
+            "en": "Square",
+            "ja": "四角メガネ",
+            "ko": "사각 안경",
+            "fr": "Carrées",
+            "de": "Eckig",
+            "es-419": "Cuadrados",
+            "pt-BR": "Quadrados",
+            "it": "Squadrati",
+            "ru": "Квадратные"
+          }
+        },
+        {
+          "id": "monocle",
+          "name": {
+            "zh": "单片镜",
+            "zh-Hant": "單片鏡",
+            "en": "Monocle",
+            "ja": "モノクル",
+            "ko": "모노클",
+            "fr": "Monocle",
+            "de": "Monokel",
+            "es-419": "Monóculo",
+            "pt-BR": "Monóculo",
+            "it": "Monocolo",
+            "ru": "Монокль"
+          }
+        }
+      ]
+    },
+    {
+      "id": "neck",
+      "name": {
+        "zh": "颈饰",
+        "zh-Hant": "頸飾",
+        "en": "Neck",
+        "ja": "首元",
+        "ko": "목 장식",
+        "fr": "Cou",
+        "de": "Hals",
+        "es-419": "Cuello",
+        "pt-BR": "Pescoço",
+        "it": "Collo",
+        "ru": "Шея"
+      },
+      "options": [
+        {
+          "id": "none",
+          "name": {
+            "zh": "无",
+            "zh-Hant": "無",
+            "en": "None",
+            "ja": "なし",
+            "ko": "없음",
+            "fr": "Aucun",
+            "de": "Keine",
+            "es-419": "Ninguno",
+            "pt-BR": "Nenhum",
+            "it": "Nessuno",
+            "ru": "Нет"
+          }
+        },
+        {
+          "id": "bowtie",
+          "name": {
+            "zh": "领结",
+            "zh-Hant": "領結",
+            "en": "Bow tie",
+            "ja": "蝶ネクタイ",
+            "ko": "나비넥타이",
+            "fr": "Nœud papillon",
+            "de": "Fliege",
+            "es-419": "Corbata de moño",
+            "pt-BR": "Gravata-borboleta",
+            "it": "Papillon",
+            "ru": "Галстук-бабочка"
+          }
+        },
+        {
+          "id": "bell",
+          "name": {
+            "zh": "铃铛",
+            "zh-Hant": "鈴鐺",
+            "en": "Bell",
+            "ja": "鈴",
+            "ko": "방울",
+            "fr": "Clochette",
+            "de": "Glöckchen",
+            "es-419": "Cascabel",
+            "pt-BR": "Sininho",
+            "it": "Campanellino",
+            "ru": "Колокольчик"
+          }
+        },
+        {
+          "id": "scarf",
+          "name": {
+            "zh": "围巾",
+            "zh-Hant": "圍巾",
+            "en": "Scarf",
+            "ja": "マフラー",
+            "ko": "목도리",
+            "fr": "Écharpe",
+            "de": "Schal",
+            "es-419": "Bufanda",
+            "pt-BR": "Cachecol",
+            "it": "Sciarpa",
+            "ru": "Шарф"
+          }
+        }
+      ]
+    }
+  ],
+  "presets": [],
+  "vocab": [
+    {
+      "id": "neutral",
+      "kind": "expression",
+      "names": {
+        "zh": [
+          "平静"
+        ]
+      },
+      "about": {
+        "zh": "默认的脸",
+        "en": "the default face"
+      },
+      "seconds": 0.9
+    },
+    {
+      "id": "happy",
+      "kind": "expression",
+      "names": {
+        "zh": [
+          "开心",
+          "高兴"
+        ]
+      },
+      "about": {
+        "zh": "眼睛弯成 ^ ^",
+        "en": "eyes curve into ^ ^"
+      },
+      "seconds": 0.9
+    },
+    {
+      "id": "wink",
+      "kind": "expression",
+      "names": {
+        "zh": [
+          "眨眼"
+        ]
+      },
+      "about": {
+        "zh": "一只眼 ^",
+        "en": "one eye turns into ^"
+      },
+      "seconds": 0.9
+    },
+    {
+      "id": "love",
+      "kind": "expression",
+      "names": {
+        "zh": [
+          "喜欢",
+          "爱心"
+        ]
+      },
+      "about": {
+        "zh": "眼睛变心形,冒小心心",
+        "en": "heart-shaped eyes, little hearts float up"
+      },
+      "seconds": 0.9
+    },
+    {
+      "id": "shy",
+      "kind": "expression",
+      "names": {
+        "zh": [
+          "害羞"
+        ]
+      },
+      "about": {
+        "zh": "脸红,眼神躲开",
+        "en": "blushes and looks away"
+      },
+      "seconds": 0.9
+    },
+    {
+      "id": "surprised",
+      "kind": "expression",
+      "names": {
+        "zh": [
+          "惊讶",
+          "吃惊"
+        ]
+      },
+      "about": {
+        "zh": "眼睛放大,头顶感叹号",
+        "en": "eyes go wide, an exclamation mark overhead"
+      },
+      "seconds": 0.9
+    },
+    {
+      "id": "angry",
+      "kind": "expression",
+      "names": {
+        "zh": [
+          "生气"
+        ]
+      },
+      "about": {
+        "zh": "皱眉,头顶怒气符号,身体发抖",
+        "en": "frowns, an anger mark overhead, body shaking"
+      },
+      "seconds": 0.9
+    },
+    {
+      "id": "sad",
+      "kind": "expression",
+      "names": {
+        "zh": [
+          "难过",
+          "伤心"
+        ]
+      },
+      "about": {
+        "zh": "八字眉,掉眼泪",
+        "en": "brows slant down, tears fall"
+      },
+      "seconds": 0.9
+    },
+    {
+      "id": "sleepy",
+      "kind": "expression",
+      "names": {
+        "zh": [
+          "犯困",
+          "困"
+        ]
+      },
+      "about": {
+        "zh": "眯眼打哈欠",
+        "en": "squints and yawns"
+      },
+      "seconds": 0.9
+    },
+    {
+      "id": "thinking",
+      "kind": "expression",
+      "names": {
+        "zh": [
+          "思考",
+          "想想"
+        ]
+      },
+      "about": {
+        "zh": "眼睛往上看,头顶冒圈",
+        "en": "looks up, rings rise overhead"
+      },
+      "seconds": 0.9
+    },
+    {
+      "id": "smug",
+      "kind": "expression",
+      "names": {
+        "zh": [
+          "得意",
+          "嘚瑟"
+        ]
+      },
+      "about": {
+        "zh": "眯眼斜看,嘴角带笑",
+        "en": "a narrowed sidelong look and a smirk"
+      },
+      "seconds": 0.9
+    },
+    {
+      "id": "pout",
+      "kind": "expression",
+      "names": {
+        "zh": [
+          "嘟嘴",
+          "哼"
+        ]
+      },
+      "about": {
+        "zh": "嘴嘟起来,脸红,扭头不看你",
+        "en": "pouts, blushes and turns away from you"
+      },
+      "seconds": 0.9
+    },
+    {
+      "id": "worried",
+      "kind": "expression",
+      "names": {
+        "zh": [
+          "担心",
+          "着急"
+        ]
+      },
+      "about": {
+        "zh": "八字眉,冒冷汗",
+        "en": "brows slant down, a cold sweat"
+      },
+      "seconds": 0.9
+    },
+    {
+      "id": "determined",
+      "kind": "expression",
+      "names": {
+        "zh": [
+          "认真",
+          "坚定"
+        ]
+      },
+      "about": {
+        "zh": "眼神压低,一脸认真",
+        "en": "a lowered gaze, a serious face"
+      },
+      "seconds": 0.9
+    },
+    {
+      "id": "flustered",
+      "kind": "expression",
+      "names": {
+        "zh": [
+          "慌张",
+          "窘"
+        ]
+      },
+      "about": {
+        "zh": "眼睛变成 > <,满脸通红冒汗",
+        "en": "eyes turn into > <, red all over and sweating"
+      },
+      "seconds": 0.9
+    },
+    {
+      "id": "scared",
+      "kind": "expression",
+      "names": {
+        "zh": [
+          "害怕",
+          "吓到"
+        ]
+      },
+      "about": {
+        "zh": "眼睛瞪大,冒汗,身体发抖",
+        "en": "eyes wide, sweating, body shaking"
+      },
+      "seconds": 0.9
+    },
+    {
+      "id": "excited",
+      "kind": "expression",
+      "names": {
+        "zh": [
+          "期待",
+          "星星眼"
+        ]
+      },
+      "about": {
+        "zh": "眼睛里闪着星星",
+        "en": "stars sparkle in the eyes"
+      },
+      "seconds": 0.9
+    },
+    {
+      "id": "cry",
+      "kind": "expression",
+      "names": {
+        "zh": [
+          "大哭",
+          "哭"
+        ]
+      },
+      "about": {
+        "zh": "闭眼大哭,眼泪直流",
+        "en": "eyes shut, wailing, tears streaming"
+      },
+      "seconds": 0.9
+    },
+    {
+      "id": "confused",
+      "kind": "expression",
+      "names": {
+        "zh": [
+          "疑惑",
+          "问号"
+        ]
+      },
+      "about": {
+        "zh": "一脸不解,头顶问号",
+        "en": "a puzzled face, a question mark overhead"
+      },
+      "seconds": 0.9
+    },
+    {
+      "id": "stand",
+      "kind": "motion",
+      "names": {
+        "zh": [
+          "站起",
+          "站"
+        ]
+      },
+      "about": {
+        "zh": "站起来(坐着、睡着时)",
+        "en": "stands up (when sitting or asleep)"
+      },
+      "seconds": 1.2
+    },
+    {
+      "id": "jump",
+      "kind": "motion",
+      "names": {
+        "zh": [
+          "跳",
+          "跳起来"
+        ]
+      },
+      "about": {
+        "zh": "原地起跳",
+        "en": "jumps on the spot"
+      },
+      "seconds": 1.2
+    },
+    {
+      "id": "hop",
+      "kind": "motion",
+      "names": {
+        "zh": [
+          "小跳",
+          "蹦"
+        ]
+      },
+      "about": {
+        "zh": "小小蹦一下",
+        "en": "a small hop"
+      },
+      "seconds": 0.9
+    },
+    {
+      "id": "look",
+      "kind": "motion",
+      "names": {
+        "zh": [
+          "张望",
+          "看看"
+        ]
+      },
+      "about": {
+        "zh": "左右张望",
+        "en": "looks left and right"
+      },
+      "seconds": 2.7
+    },
+    {
+      "id": "turn",
+      "kind": "motion",
+      "names": {
+        "zh": [
+          "转身"
+        ]
+      },
+      "about": {
+        "zh": "转向另一边",
+        "en": "turns to face the other way"
+      },
+      "seconds": 0.4
+    },
+    {
+      "id": "nod",
+      "kind": "motion",
+      "names": {
+        "zh": [
+          "点头"
+        ]
+      },
+      "about": {
+        "zh": "点两下头",
+        "en": "nods twice"
+      },
+      "seconds": 0.8
+    },
+    {
+      "id": "shake",
+      "kind": "motion",
+      "names": {
+        "zh": [
+          "摇头"
+        ]
+      },
+      "about": {
+        "zh": "摇头",
+        "en": "shakes its head"
+      },
+      "seconds": 0.8
+    },
+    {
+      "id": "spin",
+      "kind": "motion",
+      "names": {
+        "zh": [
+          "转圈"
+        ]
+      },
+      "about": {
+        "zh": "原地转一圈",
+        "en": "spins around once on the spot"
+      },
+      "seconds": 0.8
+    },
+    {
+      "id": "sit",
+      "kind": "motion",
+      "names": {
+        "zh": [
+          "坐下",
+          "坐"
+        ]
+      },
+      "about": {
+        "zh": "坐下",
+        "en": "sits down"
+      },
+      "seconds": 0.8,
+      "lasting": true
+    },
+    {
+      "id": "sleep",
+      "kind": "motion",
+      "names": {
+        "zh": [
+          "睡觉",
+          "睡"
+        ]
+      },
+      "about": {
+        "zh": "坐着打盹",
+        "en": "dozes sitting down"
+      },
+      "seconds": 0.8,
+      "lasting": true
+    },
+    {
+      "id": "dizzy",
+      "kind": "motion",
+      "names": {
+        "zh": [
+          "晕",
+          "转晕"
+        ]
+      },
+      "about": {
+        "zh": "头晕眼花几秒",
+        "en": "dizzy for a few seconds"
+      },
+      "seconds": 3.2
+    },
+    {
+      "id": "walk",
+      "kind": "motion",
+      "names": {
+        "zh": [
+          "走走",
+          "散步"
+        ]
+      },
+      "about": {
+        "zh": "随便走一段",
+        "en": "wanders a little way"
+      },
+      "seconds": 12
+    },
+    {
+      "id": "run",
+      "kind": "motion",
+      "names": {
+        "zh": [
+          "跑",
+          "跑起来"
+        ]
+      },
+      "about": {
+        "zh": "跑到屏幕另一头",
+        "en": "runs to the other end of the screen"
+      },
+      "seconds": 12
+    },
+    {
+      "id": "wave",
+      "kind": "motion",
+      "names": {
+        "zh": [
+          "招手",
+          "打招呼"
+        ]
+      },
+      "about": {
+        "zh": "笑着打招呼",
+        "en": "waves hello with a smile"
+      },
+      "seconds": 1.7
+    },
+    {
+      "id": "bow",
+      "kind": "motion",
+      "names": {
+        "zh": [
+          "鞠躬"
+        ]
+      },
+      "about": {
+        "zh": "闭眼鞠一躬",
+        "en": "bows with eyes closed"
+      },
+      "seconds": 1.7
+    },
+    {
+      "id": "shiver",
+      "kind": "motion",
+      "names": {
+        "zh": [
+          "发抖",
+          "哆嗦"
+        ]
+      },
+      "about": {
+        "zh": "缩着身子抖一会儿",
+        "en": "huddles up and shivers for a while"
+      },
+      "seconds": 1.9
+    },
+    {
+      "id": "flap",
+      "kind": "motion",
+      "names": {
+        "zh": [
+          "扑腾",
+          "激动"
+        ]
+      },
+      "about": {
+        "zh": "开心地蹦起来扑腾",
+        "en": "bounces and flaps about happily"
+      },
+      "seconds": 1.5
+    },
+    {
+      "id": "dance",
+      "kind": "motion",
+      "names": {
+        "zh": [
+          "跳舞",
+          "摇摆"
+        ]
+      },
+      "about": {
+        "zh": "原地踩着节拍摇摆三秒,冒音符",
+        "en": "sways to a beat on the spot for three seconds, music notes floating up"
+      },
+      "seconds": 3.4
+    }
+  ],
+  "sounds": {},
+  "can": {
+    "walk": true
+  }
+}

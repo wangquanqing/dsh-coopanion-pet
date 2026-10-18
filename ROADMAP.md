@@ -48,7 +48,7 @@ Coopanion 全部功能按「移植到 DSH Web UI 插件」的难度分级。每�
 
 | 功能 | 状态 |
 | --- | --- |
-| i18n | ✅ 已做（v1.2）：界面文案中/英两套，默认跟随浏览器语言，设置面板可指定，改完即时重挂。上游的 11 语言里其余 9 门没搬——词表是自写的，加语言只要往 `assets/i18n.js` 的 `DICT` 里补一列 |
+| i18n | ✅ 已做（v1.2 中英 / **v1.5 补齐 11 门**）：界面文案与上游一致的 11 门，每门 128 键完整；缺键时按语言回退（繁中→中文，其余→英文）。默认跟随浏览器语言，设置面板可指定，改完即时重挂 |
 | 装扮页的高级项 | 仍未做。上游还支持导入第三方形象包（zip/文件夹），需要文件选择与沙箱加载 |
 
 ---
@@ -104,7 +104,7 @@ Coopanion 全部功能按「移植到 DSH Web UI 插件」的难度分级。每�
 | **语音识别（ASR）** | ✅ v1.3 | **不自己搬**。接 DSH 的 `speechToText` 宿主服务（`dsh-experimental-voice-input-bundle`），页面只把 WAV 交给 `pet_listen` 的宿主端点。未装时安全跳过 |
 | **语音合成（TTS）** | ✅ v1.3 | **不自己搬**。宿主代理到 [dsh-xiaomi-tts](https://github.com/ppy-web/dsh-plugin-xiaomi-mimo-tts) 注册的同源路由 `/plugins/xiaomi-mimo-tts/synthesize`，页面只负责播。未装时安全跳过 |
 | **切句器（segmenter）** | 未搬 | 上游 `src/asr/segmenter.ts`（310 行「两级都是纯逻辑」）。**当前不需要**：DSH 的识别接口收的是**整段 WAV**，切句由录音时长与调用方决定，不在插件里做流式切分。若将来要做「边听边识别」再搬 |
-| **全局说话热键** | 未做 | 用 `koffi` FFI 轮询 `GetAsyncKeyState`，浏览器拿不到。改成页内快捷键；全局热键交给 Electron 宿主 |
+| **说话热键** | ✅ v1.4 | 不搬 `koffi` FFI。改走 **DSH 自己的 `shortcuts` 服务**（`registerFixed` + `observeFixedInput`）：它已经处理了输入框焦点、终端区域、弹窗、IME 组合与「正在录快捷键」，自己挂 window keydown 会误触发也会抢键。默认 `Ctrl+Shift+.`，登记进快捷键速查、可改；服务不存在时静默跳过。**真正的「全局」热键（应用失焦也生效）仍交给 Electron 宿主** |
 | **对话页** | 不搬 | `src/chat.ts` 依赖事件库游标分页、附件存储、pending 提升/撤回；DSH 已有完整会话 UI |
 
 **可选性的实现方式（重要）**：语音这两条**都不写进 cordis 的 `inject`**。
@@ -159,6 +159,29 @@ TTS 只看它注册的同源路由在不在（路由是公开契约，也是真�
 
 并且从参数里取具体对象（`title` / `window` / `text` / `name`），气泡显示成「正在操作电脑 · 记事本」。
 **没有新增任何工具、没有改它的配置**——它装不装、开不开，桌宠都照常工作。
+
+### CUA 审批：把上游那套权限政策层搬过来（v1.4）`[已验证]`
+
+上游 `src/cua/config.ts` 的四级权限是这套设计里最通用的部分，v1.4 把它做进了
+`lib/cua-policy.js`，但**换了个落点**：
+
+| | 上游 Coopanion | 本插件 v1.4 |
+| --- | --- | --- |
+| 闸门挂在 | 它自己的 `call()` 里（因为 CUA 是它自己实现的） | DSH 的 `tools/pre-execute` 策略接缝（因为 CUA 是别的插件实现的） |
+| 谁问 | 桌宠气泡，退到系统对话框 | 桌宠气泡（`confirm` 命令 → 气泡两选项） |
+| 档位 | `ask-each-turn` / `ask-before-acting` / `ask-once` / `never-ask` | 同名同义，逐档对齐 |
+| 授权时长 | `grantMinutes`（默认 30） | 同 |
+| 一轮一答 | 是（`onTurnEnded` 清掉） | 是（`agent/status` 非 running 时 `endTurn()`） |
+| 失败语义 | 超时/拒绝 → `NotPermitted` | 超时/拒绝/抛错 → 返回 `deny` 与原因（fail closed） |
+| **她不在时** | 不适用（同进程） | **放行**，交给 DSH 自己的审批通道，免得把用户的 CUA 卡死 |
+
+**没有搬的**：`userIdleMs`（输入前先等用户离开鼠标键盘）依赖原生 `GetLastInputInfo`，
+浏览器只能近似；上游的 `screenshot.maxWidth/quality/settleMs` 等截图参数属于 CUA 引擎，
+归 dsh-computer-use-win 自己管。这两块本插件都不碰。
+
+**判定抽成了纯函数** `cuaGate(exec, next, deps)`：挂在 `ctx.on('tools/pre-execute')` 里的
+那段代码要跑起来得有 webserver/tools/channel 一整套服务，没法单独验；抽出来之后喂一个假
+`next` 就能把每种情况钉死（15 条集成断言 + 30 条政策层断言全过）。
 
 ---
 

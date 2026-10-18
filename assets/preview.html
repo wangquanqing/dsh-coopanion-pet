@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>桌宠预览</title>
+<style>
+  :root { color-scheme: light dark; }
+  html, body { margin: 0; height: 100%; overflow: hidden;
+    font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans", sans-serif; }
+  /* 46：地板与墙。上游的舞台有同样的两件东西，这里按 DSH 的主题令牌重画。 */
+  body { background: var(--pv-bg, #F7F8FA); }
+  .pv-wall {
+    position: fixed; inset: 0 0 72px 0;
+    background-image: radial-gradient(var(--pv-dot, #D8DCE4) 1.4px, transparent 1.4px);
+    background-size: 22px 22px;
+    background-position: 0 0;
+    transition: background-position .18s ease-out;
+  }
+  .pv-floor {
+    position: fixed; left: 0; right: 0; bottom: 0; height: 72px;
+    background: var(--pv-floor, #ECEEF2);
+    border-top: 1.5px solid var(--pv-line, #DDE0E6);
+  }
+  /* 昼夜按钮 */
+  .pv-mode {
+    position: fixed; left: 14px; top: 14px; z-index: 60;
+    display: grid; place-items: center; width: 36px; height: 36px;
+    border-radius: 50%; border: 1.5px solid var(--pv-line, #DDE0E6);
+    background: var(--pv-bg, #F7F8FA); color: var(--pv-fg, #1B1626);
+    cursor: pointer; font-size: 16px;
+  }
+  .pv-mode:hover { border-color: var(--pv-fg, #1B1626); }
+  .pv-hint {
+    position: fixed; right: 14px; top: 14px; z-index: 60;
+    padding: 5px 10px; border-radius: 999px;
+    border: 1.5px solid var(--pv-line, #DDE0E6);
+    background: var(--pv-bg, #F7F8FA); color: var(--pv-muted, #6A6577);
+    font-size: 12px; pointer-events: none;
+  }
+  /* 深色 */
+  html[data-pv="dark"] {
+    --pv-bg: #151A22; --pv-dot: #262E3A; --pv-floor: #1B222C;
+    --pv-line: #2C3541; --pv-fg: #E9EDF2; --pv-muted: #8C95A3;
+  }
+</style>
+</head>
+<body>
+<div class="pv-wall" id="wall" aria-hidden="true"></div>
+<div class="pv-floor" aria-hidden="true"></div>
+<button class="pv-mode" id="mode" type="button" aria-label="切换昼夜">🌙</button>
+<div class="pv-hint" id="hint">预览页 · 与桌宠共用同一条通道</div>
+
+<!-- 桌宠本体由插件脚本挂载：它读 /api/dsh-coopanion-pet/assets/ 的资源，
+     并用同一条 SSE 通道收命令。 -->
+<div id="host"></div>
+
+<script type="module">
+/**
+ * 46：独立预览页。
+ *
+ * 它**不重新实现桌宠**——而是加载同一套客户端模块，只把挂载点换成这个干净页面。
+ * 因此预览页里的她与 DSH 页面里的她能力相同（说话、走位、收工具命令、状态气泡）。
+ *
+ * 与主页面唯一的差别：这里没有 DSH 的界面，因此按钮条、气泡、状态气泡都画在
+ * 一块空背景上，便于单独观察或录屏。
+ */
+// 注意：预览页本身在 /api/dsh-coopanion-pet/preview，而资源在 …/assets/ 下，
+// 因此这里用**绝对路径**而不是相对路径（相对路径会解析成 …/preview-client.js）。
+import { startPreview } from '/api/dsh-coopanion-pet/assets/preview-client.js';
+
+// 昼夜：写 html 的 data-pv，CSS 变量跟着换
+const mode = document.getElementById('mode');
+const apply = (dark) => {
+  document.documentElement.dataset.pv = dark ? 'dark' : 'light';
+  mode.textContent = dark ? '☀️' : '🌙';
+};
+let dark = window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
+apply(dark);
+mode.addEventListener('click', () => { dark = !dark; apply(dark); });
+
+// 墙上的点跟着鼠标（上游舞台的同一个效果）
+const wall = document.getElementById('wall');
+window.addEventListener('pointermove', (e) => {
+  wall.style.backgroundPosition = `${(e.clientX / 22 * 0.6).toFixed(1)}px ${(e.clientY / 22 * 0.6).toFixed(1)}px`;
+}, { passive: true });
+
+startPreview(document.getElementById('host')).catch((error) => {
+  document.getElementById('hint').textContent = '加载失败：' + (error?.message ?? error);
+  console.error('[dsh-coopanion-pet] 预览页加载失败', error);
+});
+</script>
+</body>
+</html>

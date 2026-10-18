@@ -17,13 +17,17 @@
 // 路由用 prefix 而非 exact，是刻意的：形象包内部有相对路径导入
 // （kit/body.js 里的 './rig.js'、whale/figure.js 里的 '../kit/rig.js'、
 // 以及纹理 'tex/xxx.png'），只有路径形式的 URL 才能让浏览器按相对关系解析成功。
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, statSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createChannel, readJson } from './lib/channel.js';
 import { createPetTools } from './lib/tools.js';
 import { PET_PROMPT } from './lib/prompt.js';
 import { detectSpeechToText, detectTextToSpeech, TTS_ROUTE, STT_PACKAGE } from './lib/optional.js';
+import { createCuaPolicy, cuaGate, PERMISSION_LEVELS } from './lib/cua-policy.js';
+import { scanPacks, resolvePackFile, MANIFEST_FILE } from './lib/packs.js';
+import { createImporter, IMPORT_MAX } from './lib/pack-import.js';
 
 /** Cordis 插件名（loader 诊断用）。 */
 export const name = 'dsh-coopanion-pet';
@@ -41,6 +45,52 @@ export const REPORT = '/api/dsh-coopanion-pet/report';
 export const SPEECH = '/api/dsh-coopanion-pet/speech';
 /** 页面把要朗读的文字送来这里合成（可选：宿主没装 TTS 插件时返回 501）。 */
 export const TTS = '/api/dsh-coopanion-pet/tts';
+/**
+ * 41：形象包的路由前缀。
+ *
+ * - `/dsh-coopanion-pet/packs`：包清单（页面用它列出可用形象）
+ * - `/dsh-coopanion-pet/packs/<id>/…`：包内的素材文件
+ * - `/dsh-coopanion-pet/packs/<id>/__entry.js`：包的入口脚本（沙箱 frame 加载它）
+ * - `/dsh-coopanion-pet/frame`：沙箱 frame 的页面与脚本
+ */
+/**
+ * 41：形象包的路由前缀。
+ *
+ * **同样刻意不在 `/api` 下**：沙箱 iframe 是 opaque origin、不带 cookie，
+ * 因此包内的素材与入口脚本若走 `/api` 会被鉴权拦下（401）。
+ * 挪出来之后不走鉴权，且这些文件本来就是本插件自己的静态资源。
+ *
+ * - `/dsh-coopanion-pet/packs`：包清单
+ * - `/dsh-coopanion-pet/packs/<id>/…`：包内素材
+ * - `/dsh-coopanion-pet/packs/<id>/__entry.js`：包的入口脚本
+ */
+export const PACKS = '/dsh-coopanion-pet/packs';
+/** 42：导入端点。 */
+export const IMPORT = '/api/dsh-coopanion-pet/import';
+/** 41：沙箱 frame 的页面。 */
+/**
+ * 41：沙箱 frame 的页面。
+ *
+ * **刻意不在 `/api` 下**：DSH 的鉴权中间件拦 `/api` 前缀的全部请求，
+ * 而沙箱 iframe 是 **opaque origin，不带 cookie**，因此 `/api/...` 会被 401。
+ * 实测（见 docs/risk-verification.md 的第二轮）：脚本请求报
+ * `origin 'null' has been blocked`，根因就是鉴权而不是 CORS。
+ *
+ * 挪到 `/api` 之外后不走鉴权；frame 里只有本插件自己的静态文件，
+ * 且 CSP 把它的来源限死（`default-src 'none'`），因此安全边界不变。
+ */
+export const FIGURE_FRAME = '/dsh-coopanion-pet/frame';
+
+/**
+ * 46：独立预览页。一个带地板与墙的最小页面，只为「单独看她」用。
+ *
+ * 为什么不复用 DSH 的页面：那个页面里她住在覆盖层里，下面是完整的应用界面。
+ * 想单独看她（调形象、录屏、给别人演示）时需要一块干净的背景。
+ *
+ * 与桌宠共用同一套资源（`assets/`）与同一条 SSE 通道，因此预览页里的她
+ * 一样能说话、走位、收工具命令。
+ */
+export const PREVIEW = '/api/dsh-coopanion-pet/preview';
 
 const MIME = {
   '.css': 'text/css; charset=utf-8',
@@ -218,6 +268,38 @@ export async function apply(ctx) {
   const speech = detectSpeechToText(ctx);
   const tts = detectTextToSpeech();
 
+  /* ---------- 41/42：形象包 ----------
+     包放在 DSH home 下（不是插件包里）——插件包升级时不该丢掉用户装的形象。
+     内置的两个（whale / coo）在 assets/ 下，不占这个目录。 */
+  const PACK_DIR = path.join(process.env.DSH_HOME ?? path.join(os.homedir(), '.dsh'), 'coopanion-pet-packs');
+  /** 内置形象 id：不许被导入的包覆盖（与上游一致）。 */
+  const BUILTIN_FIGURES = ['whale', 'coo'];
+  const importer = createImporter({ packDir: PACK_DIR, builtins: BUILTIN_FIGURES });
+
+  /**
+   * CUA 权限政策层：当 `mcp__wincu__*` 要动用户的电脑时，由桌宠当面问一句。
+   *
+   * 她不在时 `ask` 会等超时，政策按「不许」处理——但**那种情况不该发生**：
+   * 没有页面时 `channel.online` 为假，`permit` 直接返回 `unavailable`，
+   * 不去抢审批，让 DSH 自己的审批通道处理，免得把用户的 CUA 卡死。
+   */
+  const cuaPolicy = createCuaPolicy({
+    ask: async (question, choices) => {
+      if (!channel?.online) return 'timeout';
+      try {
+        // 让她用气泡问：两个选项，等用户点或按 1/2
+        const res = await channel.command('confirm', {
+          question,
+          choices: choices.slice(0, 2),
+        }, 120_000);
+        if (!res.ok) return 'timeout';
+        return res.choice === 'yes' ? 'yes' : 'no';
+      } catch (error) {
+        return 'timeout';
+      }
+    },
+  });
+
   /**
    * 把用户对提问的回答作为一条新消息送回会话。
    *
@@ -263,7 +345,15 @@ export async function apply(ctx) {
             return;
           }
           const type = MIME[path.extname(file).toLowerCase()] ?? 'application/octet-stream';
-          res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'public, max-age=3600' });
+          // 加 CORS 头是**为形象包沙箱预留的**：实测（风险 3 验证）opaque origin 的
+          // 沙箱 iframe 里 `fetch` 会被 CORS 拦下（`new Image()` 不受限，因此纹理本来
+          // 就能加载，但读 model.json 之类要 fetch 的就不行）。放开这一个只读资源路由
+          // 的 CORS 没有安全代价——它本来就是对浏览器公开的静态资源。
+          res.writeHead(200, {
+            'Content-Type': type,
+            'Cache-Control': 'public, max-age=3600',
+            'Access-Control-Allow-Origin': '*',
+          });
           createReadStream(file).pipe(res);
         } catch (error) {
           res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -272,6 +362,224 @@ export async function apply(ctx) {
       },
     });
     wctx.effect(() => disposeAssets, 'dsh-coopanion-pet: 静态资源路由');
+
+    /* ---------- 1.5 独立预览页（46） ----------
+       一个带地板与墙的干净页面，只为「单独看她」——调形象、录屏、演示。
+       它加载的是同一套客户端模块，因此能力与 DSH 页面里的她相同。 */
+    const disposePreview = webServer.register({
+      kind: 'exact',
+      path: PREVIEW,
+      handler: async (req, res) => {
+        if (req.method !== 'GET' && req.method !== 'HEAD') {
+          res.writeHead(405);
+          res.end();
+          return;
+        }
+        const file = path.join(ASSETS_DIR, 'preview.html');
+        if (!existsSync(file)) {
+          res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+          res.end('preview page missing');
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+        createReadStream(file).pipe(res);
+      },
+    });
+    wctx.effect(() => disposePreview, 'dsh-coopanion-pet: 预览页');
+
+    /**
+     * 预览页还要用 `client.js`，而它在**包根**（不在 assets/ 下，因此静态资源路由
+     * 够不到它）。单独开一条精确路由提供它。
+     *
+     * 为什么不把 client.js 挪进 assets/：DSH 的 `dsh.client` 入口指向包根的它，
+     * 挪动会改动主路径的加载方式。
+     */
+    const disposePreviewClient = webServer.register({
+      kind: 'exact',
+      path: `${ROUTE}/client.js`,
+      handler: (req, res) => {
+        if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); res.end(); return; }
+        const file = path.join(HERE, 'client.js');
+        if (!existsSync(file)) { res.writeHead(404); res.end('client missing'); return; }
+        res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
+        createReadStream(file).pipe(res);
+      },
+    });
+    wctx.effect(() => disposePreviewClient, 'dsh-coopanion-pet: 预览页脚本');
+
+    /* ---------- 41/42：形象包路由 ----------
+       包放在 DSH home 下的 PACK_DIR（插件包升级不会丢用户装的形象）。
+       包代码只在沙箱 frame 里跑，宿主**只读文件、不执行**。 */
+    try { mkdirSync(PACK_DIR, { recursive: true }); } catch (error) { /* 建不出来后面会报 */ }
+
+    /** 包目录里当前的包（每次请求现扫，装了新包立刻生效）。 */
+    const listPacks = () => {
+      const r = scanPacks(PACK_DIR);
+      return r;
+    };
+
+    /** 清单：内置两个 + 目录里装的。 */
+    const disposePackList = webServer.register({
+      kind: 'exact',
+      path: PACKS,
+      handler: (req, res) => {
+        if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); res.end(); return; }
+        const { packs, problems } = listPacks();
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({
+          builtin: BUILTIN_FIGURES,
+          installed: packs.map((p) => ({
+            id: p.id, version: p.version, name: p.name, author: p.author,
+            axes: p.axes, presets: p.presets, can: p.can,
+            // **客户端建 body 要用这两个**：entry 决定加载哪个文件、
+            // export 决定调哪个导出函数。第一版漏了它们，于是沙箱报
+            // 「包的入口没有导出 」（导出名是空串）。
+            entry: p.entry, export: p.export, vocab: p.vocab,
+          })),
+          problems,
+          // zip 那条路没做（不引第三方 inflate 库），如实说明
+          zipSupported: false,
+        }));
+      },
+    });
+    wctx.effect(() => disposePackList, 'dsh-coopanion-pet: 包清单');
+
+    /** 包内的素材与入口脚本。 */
+    const disposePackFiles = webServer.register({
+      kind: 'prefix',
+      // 用 PACKS 而不是 PACKS + '/'：prefix 的语义是「以此开头」，
+      // 加上尾斜杠后 `/packs` 本身（清单）会被这条路由抢走，子路径的切片也会错位。
+      path: PACKS,
+      handler: async (req, res) => {
+        try {
+          const url = new URL(req.url, 'http://127.0.0.1');
+          const rest = decodeURIComponent(url.pathname.slice(PACKS.length)).replace(/^\/+/, '');
+          const slash = rest.indexOf('/');
+          // 没有子路径 = 清单本身（那条精确路由管它），这里让位
+          if (slash <= 0) { res.writeHead(404); res.end('bad pack path'); return; }
+          const id = rest.slice(0, slash);
+          const rel = rest.slice(slash + 1);
+          const { packs } = listPacks();
+          const pack = packs.find((p) => p.id === id);
+          if (!pack) { res.writeHead(404); res.end('no such pack'); return; }
+          // 入口脚本走单独一支：沙箱要 import 它，因此不限制扩展名
+          if (rel === '__entry.js') {
+            const file = path.join(pack.dir, pack.entry);
+            if (!existsSync(file)) { res.writeHead(404); res.end('entry missing'); return; }
+            res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' });
+            createReadStream(file).pipe(res);
+            return;
+          }
+          // 其余只放素材（图片/音频），防止任意文件被读出去
+          const file = resolvePackFile(pack.dir, rel);
+          if (!file) { res.writeHead(404); res.end('not found'); return; }
+          const type = MIME[path.extname(file).toLowerCase()] ?? 'application/octet-stream';
+          res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'public, max-age=3600', 'Access-Control-Allow-Origin': '*' });
+          createReadStream(file).pipe(res);
+        } catch (error) {
+          res.writeHead(400); res.end(String(error?.message ?? error));
+        }
+      },
+    });
+    wctx.effect(() => disposePackFiles, 'dsh-coopanion-pet: 包文件');
+
+    /**
+     * 41：沙箱 frame 的页面与脚本。
+     *
+     * **关键：给这里加 CSP，把 frame 限制成 opaque origin。**
+     * 页面用 `sandbox="allow-scripts"`（不给 allow-same-origin），
+     * 而 CSP 再补一道：只允许加载自己的脚本与图片，禁止任何连接。
+     *
+     * 上游（`src/server.ts`）也是这么做的——两道防线一起上。
+     */
+    const disposeFrame = webServer.register({
+      kind: 'prefix',
+      path: FIGURE_FRAME,
+      handler: (req, res) => {
+        const url = new URL(req.url, 'http://127.0.0.1');
+        const rel = url.pathname.slice(FIGURE_FRAME.length).replace(/^\/+/, '');
+        const name = rel === '' ? 'figure-frame.html' : rel;
+        const file = path.join(ASSETS_DIR, path.basename(name));
+        if (!existsSync(file) || !statSync(file).isFile()) { res.writeHead(404); res.end('not found'); return; }
+        const ext = path.extname(file).toLowerCase();
+        // 无扩展名的请求（/figure-frame）当 HTML 处理——**CSP 只对 HTML 加**，
+        // 因此这里必须把「按扩展名判」改成「按实际文件判」，否则 CSP 会漏掉。
+        const isHtml = ext === '.html' || ext === '';
+        const type = isHtml ? 'text/html; charset=utf-8' : (MIME[ext] ?? 'application/octet-stream');
+        const headers = { 'Content-Type': type, 'Cache-Control': 'no-store' };
+        /**
+         * **脚本与 HTML 都要带 CORS 头。**
+         *
+         * 实测：沙箱是 opaque origin（origin 为 `null`），此时 CSP 里的 `'self'`
+         * 对它不成立，因此脚本请求会被 CORS 拦下（`origin 'null' has been blocked`）。
+         * 加上 `Access-Control-Allow-Origin: *` 才放行——这也与资源路由的做法一致。
+         */
+        if (isHtml || type.startsWith('text/javascript')) headers['Access-Control-Allow-Origin'] = '*';
+        if (isHtml) {
+          // 沙箱的两道防线：CSP 限死来源，页面侧再叠 sandbox 属性
+          headers['Content-Security-Policy'] = [
+            "default-src 'none'",
+            "script-src 'self'",
+            "img-src 'self'",
+            "style-src 'unsafe-inline'",
+            "connect-src 'none'",
+          ].join('; ');
+        }
+        res.writeHead(200, headers);
+        createReadStream(file).pipe(res);
+      },
+    });
+    wctx.effect(() => disposeFrame, 'dsh-coopanion-pet: 沙箱 frame');
+
+    /** 42：导入端点。 */
+    const disposeImport = webServer.register({
+      kind: 'exact',
+      path: IMPORT,
+      handler: async (req, res) => {
+        const fail = (code, reason, message) => {
+          res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ ok: false, reason, message }));
+        };
+        if (req.method !== 'POST') { fail(405, 'method', 'POST only'); return; }
+        let body;
+        try {
+          // 上限与 IMPORT_MAX 一致（base64 会胀 1/3，因此放宽）
+          body = await readJson(req, Math.round(IMPORT_MAX * 1.4));
+        } catch (error) {
+          fail(413, 'too-large', String(error?.message ?? error));
+          return;
+        }
+        const action = String(body?.action ?? 'stage');
+        try {
+          if (action === 'stage') {
+            // 页面把文件列表发来：`[{ path, base64 }]`
+            const raw = Array.isArray(body?.files) ? body.files : [];
+            if (!raw.length) { fail(400, 'no-files', '没有收到文件'); return; }
+            const files = raw.map((f) => ({ path: String(f?.path ?? ''), data: Buffer.from(String(f?.base64 ?? ''), 'base64') }));
+            const out = await importer.stage(files);
+            res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ ok: true, ...out }));
+            return;
+          }
+          if (action === 'install') {
+            const out = await importer.install(String(body?.token ?? ''), body?.ids);
+            res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ ok: true, ...out }));
+            return;
+          }
+          if (action === 'cancel') {
+            await importer.cancel();
+            res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ ok: true }));
+            return;
+          }
+          fail(400, 'bad-action', 'action 必须是 stage / install / cancel');
+        } catch (error) {
+          fail(400, 'import-failed', String(error?.message ?? error));
+        }
+      },
+    });
+    wctx.effect(() => disposeImport, 'dsh-coopanion-pet: 导入端点');
 
     /* ---------- 2. 事件流（下行：状态 + 命令） ---------- */
 
@@ -342,6 +650,36 @@ export async function apply(ctx) {
             if (typeof body.scheme === 'string') next.scheme = body.scheme.slice(0, 64);
             channel.report(next);
             petState = { ...petState, ...next };
+          } else if (body.kind === 'speech-submit') {
+            /**
+             * 55 的降级方案：把识别文本**作为一条用户消息**送进会话。
+             *
+             * 为什么不用「填进 DSH 输入框」：那条路要 `inputActions`，而它只经
+             * `conversation.input.activity` 提供，**那个槽是 single 且被官方语音输入插件
+             * 独占**（实测：注册会报 "already has a registration"，而 DOM 直改会被
+             * React 受控组件覆盖）。因此改走这条路：语义上等价于「用户说了这句话」，
+             * 只是会直接触发一轮对话，而不是填进输入框等用户自己按回车。
+             */
+            const text = typeof body.text === 'string' ? body.text.trim().slice(0, 500) : '';
+            if (!text) { fail(400, 'empty-text'); return; }
+            const agent = activeAgent;
+            if (!agent || typeof agent.followup !== 'function') {
+              fail(503, 'no-session', '当前没有可用的会话，语音内容没能送出去。');
+              return;
+            }
+            try {
+              agent.followup({ content: [{ type: 'text', text }] });
+            } catch (error) {
+              fail(500, 'followup-failed', String(error?.message ?? error));
+              return;
+            }
+          } else if (body.kind === 'cua-level') {
+            // 设置面板改了审批档位：宿主侧的政策层是真正生效的那个，因此由它来改。
+            // 页面不持有这个状态（它拿不到政策层对象）。
+            const lv = typeof body.level === 'string' ? body.level : '';
+            if (!PERMISSION_LEVELS.includes(lv)) { fail(400, 'bad-level'); return; }
+            cuaPolicy.setLevel(lv);
+            if (typeof body.grantMinutes === 'number') cuaPolicy.setGrantMinutes(body.grantMinutes);
           } else if (body.kind === 'answer') {
             // 用户回答了一个提问：作为一条新消息送回会话，让 Agent 接着做。
             const text = typeof body.text === 'string' ? body.text.slice(0, 500) : '';
@@ -385,8 +723,24 @@ export async function apply(ctx) {
         // 免得没装语音插件时还去弹权限框、让用户白点一次拒绝。
         // 这里只回能力状态，不碰音频。
         if (req.method === 'GET' || req.method === 'HEAD') {
+          /**
+           * 44：能力探测顺便把**识别器的就绪状态**一起报出去。
+           *
+           * 为什么需要：语音识别要下载模型（SenseVoice 约 231MB）。用户在设置面板里
+           * 应当看得到「模型已就绪 / 还没下载」，而不是调了一次才发现要等。
+           *
+           * 上游（src/runtime/store.ts）自己管理模型下载；本插件**不重复那件事**——
+           * 模型由 DSH 的语音输入插件管，这里只**显示状态**，如实说明谁在管。
+           */
+          const info = { ok: true, available: speech.available, package: STT_PACKAGE };
+          try {
+            const list = speech.providers?.();
+            if (Array.isArray(list) && list.length) info.providers = list;
+          } catch (error) {
+            /* 拿不到就少报一项，不影响可用性判断 */
+          }
           res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-          res.end(JSON.stringify({ ok: true, available: speech.available, package: STT_PACKAGE }));
+          res.end(JSON.stringify(info));
           return;
         }
         if (req.method !== 'POST') { fail(405, 'method', 'POST only'); return; }
@@ -485,10 +839,84 @@ export async function apply(ctx) {
       try {
         // 记住最近活跃的 agent：用户对提问的回答要靠它送回会话
         if (payload?.agent) activeAgent = payload.agent;
+        // 一轮结束就清掉本轮的 CUA 授权答案（上游语义：一次问管一轮）
+        if (payload?.status !== 'running') cuaPolicy.endTurn();
         tracker.agentStatus(payload?.agent, payload?.status);
         broadcast();
       } catch (error) {
         ctx.logger?.warn?.('dsh-coopanion-pet: 处理 agent/status 失败', error);
+      }
+    });
+
+    /* ---------- CUA 权限闸门 ----------
+       拦 `mcp__wincu__*`（dsh-computer-use-win 经 MCP 暴露的工具），在真正执行前
+       按权限档位问一次。这是 tools/pre-execute 的 waterfall：返回 deny 就拦下，
+       返回 allow 就放行。
+
+       **为什么用 pre-execute 而不是包装工具本身**：那些工具是另一个插件注册的，
+       本插件不该去改它、也不该抢它的注册。pre-execute 是 DSH 官方的策略接缝，
+       正是给这种情况用的。
+
+       **只拦 CUA，不拦别的。** 其余工具一律 allow，本插件不做通用审批。 */
+    // 判定逻辑在 lib/cua-policy.js 的 cuaGate 里（纯函数，可单独测）；
+    // 这里只把它接到 DSH 的策略接缝上。
+    ctx.on('tools/pre-execute', (exec, next) => cuaGate(exec, next, {
+      policy: cuaPolicy,
+      isOnline: () => channel?.online === true,
+    }));
+
+    /* ---------- 40 对话页：把会话消息推给她 ----------
+       让她头顶显示最近几条对话（上游 `src/chat.ts` + `pet-app.js` 的 lines 栈）。
+
+       **数据源是 DSH 的会话事件**，不是自己存一份：
+       - `user/message`：人说的话（含 Agent 注入的上下文，因此要按 source 区分）
+       - `assistant/message`：模型这一轮说的话（取文本块）
+
+       **只推最近 3 条**（与上游 MAX_LINES 一致），且**不推工具调用细节**——
+       那是状态气泡的活，对话栈只放人话与她的回话。 */
+    const MAX_LINES = 3;
+    /** 最近的对话行：`{ role, text, at }`。 */
+    const lines = [];
+
+    /** 从消息内容里取纯文本（丢掉工具调用等非文本块）。 */
+    const textOf = (content) => {
+      if (!Array.isArray(content)) return '';
+      return content
+        .filter((c) => c && c.type === 'text' && typeof c.text === 'string')
+        .map((c) => c.text)
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    };
+
+    /** 追加一行并广播。只留最近 MAX_LINES 条。 */
+    const pushLine = (role, text) => {
+      const t = String(text ?? '').trim();
+      if (!t) return;
+
+      lines.push({ role, text: t.slice(0, 300), at: Date.now() });
+      while (lines.length > MAX_LINES) lines.shift();
+      if (channel.online) channel.push({ type: 'lines', lines: lines.map((l) => ({ role: l.role, text: l.text })) });
+    };
+
+    /**
+     * 事件名是 **`session/event`**，签名 `(session, event)`——实测确认，
+     * 不是 `session/message`（我第一版猜错了）。
+     */
+    ctx.on('session/event', (session, ev) => {
+      try {
+        const type = ev?.type;
+        if (type === 'user/message') {
+          // source.kind === 'user' 才是真人说的；其余是注入的上下文（AGENTS.md、技能等）
+          if (ev?.data?.source?.kind !== 'user') return;
+          pushLine('user', textOf(ev?.data?.content));
+          return;
+        }
+        if (type === 'assistant/message') {
+          pushLine('pet', textOf(ev?.data?.message?.content));
+        }
+      } catch (error) {
+        /* 采集失败不影响会话 */
       }
     });
 
@@ -541,6 +969,7 @@ export async function apply(ctx) {
         get online() { return channel?.online ?? false; },
       },
       getPetState: () => petState,
+      getCuaPolicy: () => cuaPolicy,
     });
 
     for (const [key, def] of Object.entries(defs)) {

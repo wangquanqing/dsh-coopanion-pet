@@ -41,7 +41,7 @@ function tailAt(bw, x) {
  */
 export function createBubble(els, deps) {
   const { bubble } = els;
-  const { sfx, onTalk, onAct, onAnswer } = deps;
+  const { sfx, onTalk, onAct, onAnswer, silent } = deps;
 
   /** 正在显示的东西；null 表示气泡是空的。 */
   let item = null;
@@ -77,6 +77,8 @@ export function createBubble(els, deps) {
    * 说话不打断还没回答的提问：排在她后面。
    */
   function say(text, options = {}) {
+    // 34：纯净模式（OBS/录屏抓画面）下她不出声也不出气泡
+    if (silent) return;
     const beats = parseBeats(text);
     if (!beats.length) return;
     queue.push({ kind: 'say', beats, marks: options.marks || [] });
@@ -136,6 +138,8 @@ export function createBubble(els, deps) {
    * 提问是急事：撤掉还在排队的提问，把新的插到队首，并打断正在说的话。
    */
   function ask(question, options = [], { own = true } = {}) {
+    // 纯净模式下不弹提问（CUA 确认走的是 `confirm` 命令，那时不会用纯净模式）
+    if (silent) return;
     dropQueuedAsks();
     if (item?.kind === 'say') close();
     queue.unshift({ kind: 'ask', question: String(question ?? ''), options, own });

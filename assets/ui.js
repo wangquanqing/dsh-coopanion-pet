@@ -43,21 +43,28 @@ export function createTools(els, deps) {
   menu.hidden = true;
   menu.setAttribute('role', 'menu');
 
-  for (const b of BUTTONS) {
-    const el = document.createElement('button');
-    el.type = 'button';
-    el.className = 'cpn-tool';
-    el.dataset.cmd = b.id;
-    el.title = t(b.key);
-    el.setAttribute('aria-label', t(b.key));
-    el.textContent = b.icon;
-    el.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      onCommand(b.id);
-    });
-    bar.appendChild(el);
+  /** 62：按偏好只放用户勾选的那几个（顺序照 BUTTONS，最多 6 个）。 */
+  function buildBar() {
+    bar.innerHTML = '';
+    const want = Array.isArray(getPref('hoverButtons')) ? getPref('hoverButtons') : null;
+    const list = want ? BUTTONS.filter((b) => want.includes(b.id)) : BUTTONS;
+    for (const b of (list.length ? list : BUTTONS)) {
+      const el = document.createElement('button');
+      el.type = 'button';
+      el.className = 'cpn-tool';
+      el.dataset.cmd = b.id;
+      el.title = t(b.key);
+      el.setAttribute('aria-label', t(b.key));
+      el.textContent = b.icon;
+      el.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onCommand(b.id);
+      });
+      bar.appendChild(el);
+    }
   }
+  buildBar();
 
   /* ---------- 菜单 ---------- */
 
@@ -141,7 +148,7 @@ export function createTools(els, deps) {
   let placed = null;
 
   function place(box, side, { visible }) {
-    if (!visible) {
+    if (!visible || bar.childElementCount === 0) {
       bar.hidden = true;
       placed = null;
       return;
@@ -162,6 +169,8 @@ export function createTools(els, deps) {
 
   return {
     place,
+    /** 62：偏好改了之后重建按钮条。 */
+    rebuild: buildBar,
     showMenu,
     hideMenu,
     get menuOpen() { return !menu.hidden; },

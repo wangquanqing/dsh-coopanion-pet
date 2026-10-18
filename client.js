@@ -48,8 +48,50 @@ window.__ModuleLoader__.load({
     /** 站立地面与窗口底边的距离。 */
     const FLOOR_GAP = 8;
 
-    /** 体型档位对应的系数（渲染内核的标准值是 0.42）。 */
+    /**
+     * 34：纯净模式。URL 的 **hash** 上带 `cpn-clean` 后，隐藏按钮条、右键菜单
+     * 与气泡，只留她本体——方便 OBS/录屏抓画面。
+     *
+     * **为什么用 hash 而不是查询串**：实测（dsh 0.2.0-rc.2）DSH 在页面脚本执行的
+     * 最早期就把 `location.search` 清空了（token 被挪走），因此 `?cpn-clean=1`
+     * 根本读不到。hash 不参与服务端处理，会原样留到页面里。
+     *
+     * 用法：`<页面地址>#cpn-clean`（值随意，只看键在不在）。
+     */
+    const CLEAN = (() => {
+      try {
+        return /(?:^|[#&])cpn-clean(?:[=&]|$)/.test(location.hash ?? '');
+      } catch (error) {
+        return false;
+      }
+    })();
+
+    /**
+     * 体型。内核的标准值是 0.42（1 倍），这里以它为基准做倍率。
+     *
+     * `scale` 是**唯一真相**（连续值 0.5–10，65）；`sizeIndex` 只是右键菜单的
+     * 三档快捷方式，写它的时候同时把 `scale` 设成对应倍率——两者不会互相打架。
+     * 上游正是这么分的（`window.scale` 连续 + 面板三档）。
+     */
     const SIZES = [0.30, 0.38, 0.48];
+    /** 三档快捷方式对应的 scale 倍率。 */
+    const SIZE_SCALES = [0.30 / 0.38, 1, 0.48 / 0.38];
+
+    /**
+     * 66：`selfAdjust: 'default'` 时，哪些项她可以**直接**改（其余要先问）。
+     *
+     * 与上游 `SELF_DEFAULT` 一致：外观与习惯可直接改；
+     * 影响用户的屏幕、耳朵与称呼的，要先问。
+     */
+    const DEFAULT_SELF_DIRECT = ['scheme', 'roam', 'snoreSeconds', 'figure'];
+
+    /** 62：悬停按钮条上可以放哪些动作（与 ui.js 的 BUTTONS 对应）。 */
+    const HOVER_IDS = ['say', 'face', 'act', 'walk', 'dress', 'sleep'];
+
+    /** 64：四种触摸（与内核 onEvent('touch') 的 kind 对应）。 */
+    const TOUCH_KINDS = ['poke', 'pet', 'throw', 'drop'];
+    /** scale 倍率 → 内核要的系数。 */
+    const scaleToUnit = (s) => 0.38 * (Number.isFinite(s) && s > 0 ? s : 1);
     const ROAMS = ['calm', 'free', 'busy'];
 
     /**
@@ -81,6 +123,38 @@ window.__ModuleLoader__.load({
       lang: 'auto',
       trail: true,
       fpsIndex: 1,
+      // 56 她怎么称呼你。空 = 不称呼（台词里不带名字）。
+      user: '',
+      // 57 六类声音各自的开关；58 入睡多少秒后停鼾声（0 = 一直响）
+      sounds: { move: true, touch: true, face: true, snore: true, talk: true, ui: true },
+      snoreSeconds: 0,
+      // 59/60 气泡框与文字大小（1 = 默认）
+      bubbleSize: 1,
+      fontSize: 1,
+      // 61 主题：auto 跟随 DSH / light / dark
+      theme: 'auto',
+      // 35 光晕强度（0 = 关）。上游是采样屏幕算的，这里是 CSS 近似。
+      glow: 7,
+      // 62 悬停按钮条上显示哪几个（最多 6 个）
+      hoverButtons: ['say', 'face', 'act', 'walk', 'dress', 'sleep'],
+      // 63 双击她打开一个输入框，回车发给会话
+      doubleClickChat: false,
+      // 64 哪些触摸唤醒她：poke 只戳 / all 全部 / none 都不 / custom 看 wakeKinds
+      touchWake: 'poke',
+      wakeKinds: ['poke'],
+      // 65 体型倍率（0.5–10，1 = 标准）
+      scale: 1,
+      // 53 选定的麦克风设备 id（空 = 系统默认）
+      micDevice: '',
+      // 40 是否显示对话栈
+      linesBubble: true,
+      // 66 她自己能改什么：self 直接改 / ask 先问。默认照搬上游分级。
+      selfAdjust: 'default',
+      selfAdjustCustom: {
+        figure: true, scheme: true, roam: true, snoreSeconds: true, sound: false,
+        scale: false, bubbleSize: false, fontSize: false, theme: false,
+        hoverButtons: false, user: false,
+      },
     };
 
     const CSS = `
@@ -100,6 +174,16 @@ window.__ModuleLoader__.load({
       }
       return out;
     }
+
+    /**
+     * 55：输入桥**必须是模块级单例**。
+     *
+     * 它在两个地方被用到：`apply` 里注册进 `conversation.input.activity` 槽，
+     * `startPet` 里用它填输入框。第一版两边各建了一个实例，于是
+     * 「注册进槽的那个」与「用来填的那个」不是同一个对象——槽里的组件把
+     * `inputActions` 存进 A，而填的时候读 B，永远拿不到。
+     */
+    let inputBridgeSingleton = null;
 
     /**
      * 需要重挂桌宠才能生效的偏好，拼成一个字符串。
@@ -147,7 +231,11 @@ window.__ModuleLoader__.load({
        * 且只同步面板能改的那几项。`apply` 里的引用都是调用时才解析，
        * 因此这个函数可以定义在它们之前。
        */
-      const SYNCED = ['sizeIndex', 'roamIndex', 'sound', 'statusBubble', 'scheme', 'trail', 'fpsIndex'];
+      const SYNCED = ['sizeIndex', 'roamIndex', 'sound', 'statusBubble', 'scheme', 'trail', 'fpsIndex',
+        'user', 'sounds', 'snoreSeconds', 'bubbleSize', 'fontSize', 'theme', 'glow',
+        'hoverButtons', 'doubleClickChat', 'touchWake', 'wakeKinds', 'scale', 'selfAdjust', 'selfAdjustCustom',
+        // 43：形象也要同步——但它是「重建 body」级的改动，见下面的分支
+        'figure', 'linesBubble'];
       let lastPrefsRaw = '';
       const syncPrefs = () => {
         let raw;
@@ -163,14 +251,29 @@ window.__ModuleLoader__.load({
           // 安静期间不要被偏好同步把声音打开
           if (key === 'sound') { if (!isQuiet()) sfx.set(prefs.sound); }
           else if (key === 'sizeIndex') { body.set({ bounds: viewport() }); body.resize(); }
+          else if (key === 'scale') { body.set({ bounds: viewport() }); body.resize(); }
           else if (key === 'roamIndex') body.set({ roam: ROAMS[prefs.roamIndex] ?? 'calm' });
           else if (key === 'scheme') Promise.resolve(body.setScheme?.(prefs.scheme)).catch(() => {});
+          else if (key === 'sounds' || key === 'snoreSeconds') applySound();
+          else if (key === 'bubbleSize' || key === 'fontSize' || key === 'theme' || key === 'glow') applyLook();
+          // 62：悬停按钮的集合变了，要重建按钮条（否则它还是老的）
+          else if (key === 'hoverButtons') tools?.rebuild?.();
+          /**
+           * 43：形象变了要重建 body。
+           *
+           * 这里**不调 runCommand**——`runCommand` 在下面才声明，而这个回调可能
+           * 先于它执行（`syncPrefs` 在帧循环里调用，而帧循环在 startPet 末尾才启动，
+           * 但依赖声明顺序容易出错）。直接调 `switchFigure` 更稳。
+           */
+          else if (key === 'figure') switchFigure(prefs.figure).catch(() => {});
         }
       };
 
       const [kit, whale, { createSfx }, { createBubble }, { createTools, TOOLS_CSS },
         { BUBBLE_CSS }, { createStatus, STATUS_CSS }, { createDress, DRESS_CSS },
-        { createTrail, TRAIL_CSS }, { createVoice }, { t }] = await Promise.all([
+        { createTrail, TRAIL_CSS }, { createVoice, filterHallucination, toSimplified, splitSentences, joinSpeech },
+        { createVoiceUi }, { createInputBridge }, { registerSpeakShortcut },
+        { createLines, LINES_CSS }, { createPackBody }, { t }] = await Promise.all([
         import(`${ABS}kit/body.js`),
         import(`${ABS}whale/figure.js`),
         import(`${ABS}sfx.js`),
@@ -181,19 +284,41 @@ window.__ModuleLoader__.load({
         import(`${ABS}dress.js`),
         import(`${ABS}trail.js`),
         import(`${ABS}voice.js`),
+        import(`${ABS}voice-ui.js`),
+        import(`${ABS}input-bridge.js`),
+        import(`${ABS}hotkey.js`),
+        import(`${ABS}lines.js`),
+        import(`${ABS}pack-body.js`),
         import(`${ABS}i18n.js`),
       ]);
 
       // 气泡、按钮条、状态与装扮面板的样式随桌宠一起挂载、一起卸载，避免污染宿主的样式表。
       const style = document.createElement('style');
       style.setAttribute(STYLE_ATTR, 'parts');
-      style.textContent = BUBBLE_CSS + TOOLS_CSS + STATUS_CSS + DRESS_CSS + TRAIL_CSS;
+      style.textContent = BUBBLE_CSS + TOOLS_CSS + STATUS_CSS + DRESS_CSS + TRAIL_CSS + LINES_CSS;
       document.head.appendChild(style);
 
+      // 形象包内部按 base 解析纹理与 model.json，必须传它自己的目录（绝对 URL）。
       // 形象包内部按 base 解析纹理与 model.json，必须传它自己的目录（绝对 URL）。
       const figure = await whale.createWhaleFigure(`${ABS}whale/`, {
         kit: { createRig: kit.createRig },
       });
+
+      /**
+       * 43：第二个内置形象 Coo。
+       *
+       * **按需加载**：Coo 是纯代码绘制（SVG path，无纹理，三个文件共 49KB），
+       * 因此只在真的切过去时才 import——默认用鲸鱼娘的人不必为它付加载时间。
+       *
+       * 两者共用同一套渲染内核（`assets/kit/`）：Coo 的 `coo.js` 从
+       * `../kit/body.js` 取 `DROP`/`FACES`/`LEG_W`/`STAND`/`f`/`heartD`
+       * （已核对：这些导出本插件都有）。
+       */
+      let cooBodyFactory = null;
+      const loadCooFactory = async () => {
+        cooBodyFactory ??= await import(`${ABS}coo/figure.js`);
+        return cooBodyFactory;
+      };
 
       const root = document.createElement('div');
       root.className = 'cpn-pet-layer';
@@ -208,11 +333,25 @@ window.__ModuleLoader__.load({
       const sfx = createSfx();
       sfx.set(prefs.sound);
 
+      /**
+       * 57/58：六类声音各自的开关，以及入睡多久后停鼾声。
+       *
+       * sfx.js 本来就支持（`configure({ kinds, snoreSeconds })`），只是以前没接出来。
+       */
+      const applySound = () => {
+        const kinds = prefs.sounds && typeof prefs.sounds === 'object' ? prefs.sounds : {};
+        sfx.configure({
+          kinds,
+          snoreSeconds: Number.isFinite(prefs.snoreSeconds) ? Math.max(0, prefs.snoreSeconds) : 0,
+        });
+      };
+
       const viewport = () => ({
         W: window.innerWidth,
         H: window.innerHeight,
         floorY: window.innerHeight - FLOOR_GAP,
-        S: SIZES[prefs.sizeIndex] ?? SIZES[1],
+        // 65：体型以 scale 为准；sizeIndex 只是三档快捷，已在写偏好时同步进 scale
+        S: scaleToUnit(prefs.scale ?? SIZE_SCALES[prefs.sizeIndex ?? 1]),
       });
 
       /** 最近一帧的布局，供指针判定与摆放读取。 */
@@ -288,18 +427,41 @@ window.__ModuleLoader__.load({
 
       /** 最近问出去的那个问题，回答回传时一并发回去，好在会话里说清是在答什么。 */
       let lastQuestion = '';
+      /**
+       * 正在等回答的 CUA 权限确认。
+       *
+       * 与普通提问的区别：确认的回答**不送回会话**（那是插件之间的问答，
+       * 不是用户给模型的话），只回给正在等的那个工具调用。
+       */
+      let pendingConfirm = null;
 
+      // 34：纯净模式下气泡也不显示——由 deps 里的钩子拦住所有显示路径
       const bubble = createBubble({ bubble: bubbleEl }, {
+        // 她说的每一句都先过这里；纯净模式下直接吞掉
+        silent: CLEAN,
         sfx,
         onTalk: () => body.talk(),
         onAct: (actions) => { for (const a of actions) body.do(a); },
         onAnswer: (a) => {
-          // 用户回答了一个提问：送回宿主，由它作为一条新消息转给 Agent。
           // 放弃（Esc）不算回答，不回传。
           if (!a || a.dismissed) return;
+          // CUA 权限确认：只回给等它的那个工具调用，不送回会话
+          if (pendingConfirm) {
+            const yes = a.index === 0 || String(a.text ?? a.label ?? '').trim() === '可以';
+            pendingConfirm(yes ? 'yes' : 'no');
+            return;
+          }
           const text = a.text !== undefined ? String(a.text) : String(a.label ?? '');
           if (!text) return;
-          report({ kind: 'answer', text, via: a.text !== undefined ? 'typed' : 'option', question: lastQuestion }, true);
+          // 63 双击输入框：这是用户主动对她说的话，问题上下文为空
+          const viaChat = pendingChat;
+          pendingChat = false;
+          report({
+            kind: 'answer',
+            text,
+            via: a.text !== undefined ? 'typed' : 'option',
+            question: viaChat ? '' : lastQuestion,
+          }, true);
           lastQuestion = '';
         },
       });
@@ -312,10 +474,134 @@ window.__ModuleLoader__.load({
        * 两条链路都是可选的——宿主没装对应插件时端点回 501，这里静默跳过。
        */
       const voice = createVoice({
-        // 说话时让她的嘴动起来：录音电平没接（识别只需要能量门限），
-        // 因此这里只在真有声音进来时轻推一下嘴部动画。
-        onLevel: () => { try { body.talk(); } catch (error) { /* 未就绪就算了 */ } },
+        // 录音时让她的嘴跟着音量动（53 的波形反馈也用同一个电平）
+        onLevel: (level) => {
+          try { body.talk(); } catch (error) { /* 未就绪就算了 */ }
+          if (level > 0.06) { voiceLevel = level; }
+        },
+        // 录音计时：显示「正在听 3.2s」
+        onTick: ({ elapsed }) => {
+          voiceElapsed = elapsed;
+          if (voiceState === 'recording') paintVoice();
+        },
       });
+
+      /**
+       * 55：把识别结果填进 DSH 输入框。
+       *
+       * **必须注册进 `conversation.input.activity` 槽**才拿得到 `inputActions`
+       * （`shell.overlay` 的 props 是空接口）。注册在 apply 里做，见文件末尾。
+       */
+      inputBridgeSingleton ??= createInputBridge(React, {
+        // 55 的降级路径：槽拿不到时（官方语音插件占了那个 single 槽），
+        // 把识别文本作为一条用户消息送进会话。
+        submitViaHost: (text) => {
+          fetch(REPORT, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ kind: 'speech-submit', text }),
+          }).catch(() => {});
+        },
+      });
+      const inputBridge = inputBridgeSingleton;
+
+      /**
+       * 52：按住 Shift+Space 说话。松开就识别，识别到了直接填进输入框。
+       *
+       * 走页面内的 keydown/keyup——**DSH 的 shortcuts 服务只有 keydown，没有 keyup**，
+       * 拿不到「松开」的时机。代价：只在 DSH 页面有焦点时生效。
+       */
+      const voiceUi = createVoiceUi({
+        record: async () => {
+          // 按住期间录到松手为止；上限 15 秒兜底
+          const rec = await voice.record({ seconds: 15 });
+          if (rec.error) return { error: rec.error, message: rec.message };
+          // 送宿主识别
+          let res;
+          try {
+            res = await fetch(SPEECH, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ audioBase64: base64Of(rec.wav) }),
+            });
+          } catch (error) {
+            return { error: 'unreachable', message: String(error?.message ?? error) };
+          }
+          let out = null;
+          try { out = await res.json(); } catch (error) { out = null; }
+          if (!res.ok || !out?.ok) {
+            return { error: out?.reason ?? `http-${res.status}`, message: out?.message };
+          }
+          // 49 + 50：出口这一层做幻觉过滤与繁简归一
+          const text = cleanSpeech(out.text);
+          return { text };
+        },
+        stopRecord: () => voice.stop(),
+        onState: (state) => voiceUiIndicator?.(state),
+        insertText: (text) => inputBridge.insert(text),
+      });
+
+      /**
+       * 录音状态的显示：她头顶一个小指示（正在听 / 识别中 + 计时 + 音量条）。
+       *
+       * 这是**替代原计划「假流式」的方案**：实测分片识别更慢更不准
+       * （见 docs/risk-verification.md），而「录的时候看得见」才是真正缺的体验。
+       */
+      let voiceUiIndicator = null;
+
+      /** 录音指示器的 DOM：她头顶一个小胶囊，显示「正在听 3.2s」+ 音量条。 */
+      const voiceEl = document.createElement('div');
+      voiceEl.className = 'cpn-voice';
+      voiceEl.hidden = true;
+      voiceEl.setAttribute('aria-hidden', 'true');
+      voiceEl.innerHTML = '<i class="cpn-voice-dot"></i><span class="cpn-voice-text"></span><b class="cpn-voice-bar"></b>';
+      const voiceTextEl = voiceEl.querySelector('.cpn-voice-text');
+      const voiceBarEl = voiceEl.querySelector('.cpn-voice-bar');
+      root.appendChild(voiceEl);
+
+      /** 指示器的状态机：idle 隐藏，recording 显示计时+音量，transcribing 显示「识别中」。 */
+      let voiceState = 'idle';
+      let voiceLevel = 0;
+      let voiceElapsed = 0;
+      voiceUiIndicator = (state) => {
+        voiceState = state;
+        if (state === 'idle') {
+          voiceEl.hidden = true;
+          voiceLevel = 0;
+        } else {
+          voiceEl.hidden = false;
+        }
+        paintVoice();
+      };
+
+      function paintVoice() {
+        if (voiceState === 'recording') {
+          voiceTextEl.textContent = t('voice.listening', { s: voiceElapsed.toFixed(1) });
+          voiceBarEl.hidden = false;
+          voiceBarEl.style.setProperty('--cpn-voice-level', String(Math.min(1, voiceLevel)));
+        } else if (voiceState === 'transcribing') {
+          voiceTextEl.textContent = t('voice.transcribing');
+          voiceBarEl.hidden = true;
+        }
+        // 摆在她头顶（与气泡同一个锚点）
+        if (layout) {
+          const anchor = layout.bubble ?? { x: layout.x, y: 0 };
+          const w = voiceEl.offsetWidth || 120;
+          voiceEl.style.left = `${Math.max(8, Math.min(anchor.x - w / 2, window.innerWidth - w - 8))}px`;
+          voiceEl.style.top = `${Math.max(8, anchor.y - 34)}px`;
+        }
+      }
+
+      /**
+       * 49/50：识别结果的出口后处理。
+       *
+       * 顺序是刻意的：**先繁简归一，再幻觉过滤**——归一后的字才与幻觉名单对得上
+       * （名单里有简体词，如「谢谢观看」）。
+       */
+      function cleanSpeech(raw) {
+        const simplified = toSimplified(String(raw ?? ''));
+        return filterHallucination(simplified);
+      }
 
       /**
        * 走路轨迹点。锚点取她脚底正中：布局里的 x 是身体中心，
@@ -331,21 +617,244 @@ window.__ModuleLoader__.load({
       });
       root.appendChild(trail.root);
 
+      /**
+       * 40：对话栈。数据来自宿主推来的 `lines` 帧（宿主订阅 DSH 的 `session/event`）。
+       *
+       * 锚点取她头顶：`layout.bubble` 就是内核给的头顶位置。
+       */
+      const lines = createLines({
+        anchor: () => {
+          if (!layout) return null;
+          return { x: layout.x, y: (layout.bubble?.y ?? window.innerHeight) - 6, facing: layout.facing ?? 1 };
+        },
+      });
+      root.appendChild(lines.root);
+
+      /**
+       * 66：她自己能改什么（上游的 `selfAdjust` 四级）。
+       *
+       * - `off`：什么都不许她自己改
+       * - `default`：上游默认分级——外观与习惯（scheme/roam/snoreSeconds/figure）
+       *   可直接改；影响你的屏幕、耳朵与称呼的（sound/scale/bubbleSize/fontSize/
+       *   theme/hoverButtons/user）要先问
+       * - `any`：都可以直接改
+       * - `custom`：按 `selfAdjustCustom` 逐项定
+       *
+       * @returns `'self'`（可直接改）或 `'ask'`（要先问）
+       */
+      const selfTierOf = (key) => {
+        const mode = ['off', 'default', 'any', 'custom'].includes(prefs.selfAdjust)
+          ? prefs.selfAdjust
+          : 'default';
+        if (mode === 'off') return 'ask';
+        if (mode === 'any') return 'self';
+        const custom = prefs.selfAdjustCustom ?? {};
+        if (mode === 'custom') {
+          const v = custom[key];
+          return typeof v === 'boolean' ? (v ? 'self' : 'ask') : 'ask';
+        }
+        // default：外观与习惯可直接改，其余要先问
+        return DEFAULT_SELF_DIRECT.includes(key) ? 'self' : 'ask';
+      };
+
+      /**
+       * 把 59/60/61/35 四项写进 CSS 变量与 data 属性。
+       *
+       * 为什么用 CSS 变量而不是逐处改内联样式：气泡与按钮条的样式都在样式表里，
+       * 变量是唯一能一处改、处处生效的做法，也避免每帧重算。
+       */
+      const applyLook = () => {
+        const clamp01 = (v, lo, hi, dflt) => (Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : dflt);
+        root.style.setProperty('--cpn-bubble-size', String(clamp01(prefs.bubbleSize, 0.8, 1.6, 1)));
+        root.style.setProperty('--cpn-font-size', String(clamp01(prefs.fontSize, 0.8, 1.6, 1)));
+        const glow = clamp01(prefs.glow, 0, 16, 0);
+        root.style.setProperty('--cpn-glow', String(glow));
+        root.dataset.cpnGlow = glow > 0 ? 'on' : 'off';
+        // 气泡是 root 之外的兄弟元素，主题属性两边都要写
+        const theme = ['auto', 'light', 'dark'].includes(prefs.theme) ? prefs.theme : 'auto';
+        root.dataset.cpnTheme = theme;
+        bubbleEl.dataset.cpnTheme = theme;
+        // 气泡的框与字大小同样吃这两个变量（它在 root 之外，得单独设）
+        bubbleEl.style.setProperty('--cpn-bubble-size', String(clamp01(prefs.bubbleSize, 0.8, 1.6, 1)));
+        bubbleEl.style.setProperty('--cpn-font-size', String(clamp01(prefs.fontSize, 0.8, 1.6, 1)));
+      };
+
       /** 装扮面板换装后要更新偏好，这里先占位，下面接上 body。 */
       let dress = null;
 
       let tools = null;
 
-      const body = kit.createBody(
-        {
-          root,
-          bounds: viewport,
-          emit: () => {},
-          sound: (name, kind, ...args) => sfx.play(name, kind, ...args),
-          start: { x: startX(), facing: -1, enter: 'drop' },
+      /**
+       * 64：内核把「她被戳了 / 被摸了 / 被拎了 / 被扔了」报到这里。
+       *
+       * `touchWake` 决定哪些触摸唤醒她（上游语义）：poke 只戳 / all 全部 /
+       * none 都不 / custom 看 wakeKinds。唤醒＝她说一句随机台词。
+       *
+       * 注意：内核**自己**已经把视觉反馈做了（表情、摔晕），这里只加「回应」。
+       *
+       * 抽成独立函数是因为**形象可以换**（43）：换形象要重建 body，
+       * 而重建时要用同一套 emit 与 sound。
+       */
+      const hostBase = () => ({
+        root,
+        bounds: viewport,
+        emit: (kind, detail) => {
+          if (kind !== 'touch' || !detail) return;
+          // 注意：这里的变量叫 `touch` 而不是 `t`——`t` 是本模块的翻译函数，
+          // 用 `const t = detail.kind` 会把它遮蔽掉，随后 `t(…)` 就会抛
+          // 「t is not a function」，整个客户端模块都加载不了。
+          const touch = detail.kind;
+          const mode = prefs.touchWake ?? 'poke';
+          const wakes = mode === 'all'
+            ? true
+            : mode === 'poke'
+              ? touch === 'poke'
+              : mode === 'custom'
+                ? Array.isArray(prefs.wakeKinds) && prefs.wakeKinds.includes(touch)
+                : false;
+          if (!wakes) return;
+          // 她正忙着说话/提问时不插话
+          if (bubble.busy) return;
+          const lines = [1, 2, 3, 4, 5].map((i) => t(`pet.line${i}`));
+          const line = lines[Math.floor(Math.random() * lines.length)];
+          // 56：有称呼就带上
+          bubble.say(prefs.user ? `${prefs.user}，${line}` : line);
         },
-        { figure, bounds: viewport, roam: ROAMS[prefs.roamIndex] ?? 'calm' },
-      );
+        sound: (name, kind, ...args) => sfx.play(name, kind, ...args),
+        start: { x: startX(), facing: -1, enter: 'drop' },
+      });
+
+      /** 第三方形象包的清单（宿主推来）。 */
+      let installedPacks = [];
+      // 不在 /api 下：沙箱要读包内素材，而它不带 cookie
+      const PACK_LIST = '/dsh-coopanion-pet/packs';
+      const refreshPacks = async () => {
+        try {
+          const res = await fetch(PACK_LIST);
+          const body = await res.json();
+          installedPacks = Array.isArray(body?.installed) ? body.installed : [];
+        } catch (error) {
+          installedPacks = [];
+        }
+        return installedPacks;
+      };
+      await refreshPacks();
+
+      /**
+       * 43：按当前形象建 body。三条路：
+       *
+       * - `whale`：内核直接收 `opts.figure`（sprite rig）；
+       * - `coo`：走它自己的 `createCooBody`（它内部调 `kit.createBody`，
+       *   并带自己的 CSS 与 skin 规范化），返回的就是一个完整 body；
+       * - **第三方包**：跑在沙箱 frame 里（41），用 `createPackBody` 把它
+       *   包装成与内核 body 同接口的适配器。
+       *
+       * **换形象必须重建 body**：三者的 CSS 与 skin 形态各不相同。
+       */
+      async function makeBody() {
+        const id = prefs.figure || 'whale';
+        const host = hostBase();
+        if (id === 'coo') {
+          const coo = await loadCooFactory();
+          return coo.createCooBody(`${ABS}coo/`, {
+            kit: { createBody: kit.createBody },
+            host,
+          });
+        }
+        // 内置之外就是第三方包
+        if (id !== 'whale') {
+          // **先刷新列表再找**：包是刚导入的话，内存里那份还是旧的
+          let pack = installedPacks.find((p) => p.id === id);
+          if (!pack) {
+            await refreshPacks();
+            pack = installedPacks.find((p) => p.id === id);
+          }
+          if (!pack) throw new Error(`没有这个形象包：${id}`);
+          /**
+           * **给沙箱的 URL 必须是绝对的。**
+           *
+           * 实测：opaque origin 里 `new URL('/relative')` 会抛 `Invalid URL`——
+           * 那里没有可用的 base。因此用 location.origin 拼成绝对地址。
+           *
+           * 路径也不在 /api 下：沙箱是 opaque origin 不带 cookie，/api 会被鉴权拦下。
+           */
+          const origin = location.origin;
+          return createPackBody({
+            id: pack.id,
+            frameUrl: `${origin}/dsh-coopanion-pet/frame`,
+            entryUrl: `${origin}/dsh-coopanion-pet/packs/${pack.id}/__entry.js`,
+            baseUrl: `${origin}/dsh-coopanion-pet/packs/${pack.id}/`,
+            // 包可以用内核建身体（多数包都这么做）
+            kitUrl: `${ABS}kit/body.js`,
+            exportName: pack.export ?? '',
+            vocab: pack.vocab ?? [],
+            start: { x: startX(), facing: -1, enter: 'drop' },
+          }, {
+            root,
+            bounds: () => viewport(),
+            viewport,
+            onEvent: (kind, detail) => {
+              // 触摸事件走与内置形象同一条路（64 的唤醒判据）
+              if (kind !== 'touch' || !detail) return;
+              const touch = detail.kind;
+              const mode = prefs.touchWake ?? 'poke';
+              const wakes = mode === 'all' ? true
+                : mode === 'poke' ? touch === 'poke'
+                  : mode === 'custom' ? (Array.isArray(prefs.wakeKinds) && prefs.wakeKinds.includes(touch))
+                    : false;
+              if (!wakes || bubble.busy) return;
+              const lines = [1, 2, 3, 4, 5].map((i) => t(`pet.line${i}`));
+              const line = lines[Math.floor(Math.random() * lines.length)];
+              bubble.say(prefs.user ? `${prefs.user}，${line}` : line);
+            },
+            onSound: (name, kind, ...args) => sfx.play(name, kind, ...args),
+            onError: (error) => console.warn('[dsh-coopanion-pet] 形象包出错：', error),
+          });
+        }
+        return kit.createBody(host, { figure, bounds: viewport, roam: ROAMS[prefs.roamIndex] ?? 'calm' });
+      }
+
+      /** 当前 body。形象切换时会换掉，因此用 `let`。 */
+      let body = await makeBody();
+
+      /**
+       * 43：换形象。**建新的、释放旧的**——不能只换 figure（Coo 的 CSS 与 skin 形态
+       * 与鲸鱼娘不同，换 figure 会让样式对不上）。
+       *
+       * @param id - `'whale'` 或 `'coo'`。
+       * @returns 是否真的换了。
+       */
+      /**
+       * `switchFigure` 与 `makeBody` 都用**函数声明**而不是 `const`：
+       * `syncPrefs`（定义在前面）会引用它们，而 `const` 的暂时性死区
+       * 按执行顺序判定——用声明式可以彻底避免这类顺序陷阱。
+       */
+      async function switchFigure(id) {
+        const want = String(id || 'whale');
+        const now = prefs.figure || 'whale';
+        if (want === now) return false;
+        const prev = body;
+        const prevPref = prefs.figure;
+        prefs.figure = want;
+        try {
+          const next = await makeBody();
+          body = next;
+          writePrefs({ figure: want });
+          // 释放旧的（它会释放自己的 WebGL 上下文与样式）
+          try { prev.dispose?.(); } catch (error) { /* 释放失败不影响新的 */ }
+          return true;
+        } catch (error) {
+          // 建不起来就退回原来的，并如实回报
+          prefs.figure = prevPref;
+          throw error;
+        }
+      }
+
+      // 56-67 的初始应用：外观、声音、主题
+      applyLook();
+      applySound();
+      // 53：恢复上次选定的麦克风
+      if (prefs.micDevice) voice.setDevice(prefs.micDevice);
 
       // 恢复上次的装扮（形象包不认的取值会在内核里退回默认）
       if (prefs.scheme && prefs.scheme !== DEFAULT_PREFS.scheme) {
@@ -371,7 +880,9 @@ window.__ModuleLoader__.load({
           case 'say': {
             // 文案每次现取：语言可能在设置面板里刚改过
             const lines = [1, 2, 3, 4, 5].map((i) => t(`pet.line${i}`));
-            bubble.say(pick(lines));
+            const line = pick(lines);
+            // 56：有称呼就带上
+            bubble.say(prefs.user ? `${prefs.user}，${line}` : line);
             break;
           }
           case 'face': {
@@ -407,7 +918,9 @@ window.__ModuleLoader__.load({
           }
           case 'size': {
             prefs.sizeIndex = ((prefs.sizeIndex ?? 1) + 1) % SIZES.length;
-            writePrefs({ sizeIndex: prefs.sizeIndex });
+            // 同步 scale：三档快捷改的就是体型本身，两者必须一致
+            prefs.scale = SIZE_SCALES[prefs.sizeIndex];
+            writePrefs({ sizeIndex: prefs.sizeIndex, scale: prefs.scale });
             body.set({ bounds: viewport() });
             body.resize();
             break;
@@ -464,6 +977,10 @@ window.__ModuleLoader__.load({
         onPref: (k, v) => writePrefs({ [k]: v }),
         getPref: (k) => prefs[k],
       });
+      // 34：纯净模式下按钮条与菜单都不出现（元素还在，但永不显示）
+      if (CLEAN) {
+        tools.root?.querySelectorAll?.('.cpn-tools, .cpn-menu')?.forEach?.((el) => { el.hidden = true; });
+      }
       root.appendChild(bubbleEl);
 
       /* ---------- 安静 ----------
@@ -574,6 +1091,9 @@ window.__ModuleLoader__.load({
           if (prefs.statusBubble !== false && !isQuiet()) status.step(dt);
           else status.yield();
           bubble.place(layout?.bubble ?? { x: layout?.x ?? 0, y: 0 }, layout?.facing ?? 1);
+          // 40：对话栈。她说话/提问时整体让位（那是更重要的事）
+          if (prefs.linesBubble !== false) lines.step(dt, bubble.busy);
+          else lines.clear();
           // 轨迹：只有真的在走动时才落点（拖拽、跳跃不算「走过」）
           if (prefs.trail !== false) {
             trail.step(dt, ['walk', 'run'].includes(layout?.mode ?? ''));
@@ -649,6 +1169,20 @@ window.__ModuleLoader__.load({
             await Promise.resolve(body.setScheme(id, { fade: 0.3 })).catch(() => {});
             return { ok: true };
           }
+          case 'confirm': {
+            // CUA 权限确认：用气泡问一句，两个选项。
+            // 这里**不落盘、不改偏好**，只是一次性的问答。
+            const question = String(args?.question ?? '').slice(0, 200);
+            const choices = Array.isArray(args?.choices) ? args.choices.map(String).slice(0, 2) : [];
+            if (!question || choices.length < 2) return { ok: false, reason: 'bad-confirm' };
+            const choice = await new Promise((resolve) => {
+              // 用提问气泡：用户点选项或按 1/2。她不在气泡上答就等工具侧超时。
+              bubble.ask(question, choices, { own: false });
+              pendingConfirm = resolve;
+            });
+            pendingConfirm = null;
+            return { ok: true, choice };
+          }
           case 'quiet': {
             // 安静：关音效、不走动、状态气泡让位。临时状态，不改用户偏好。
             const minutes = typeof args?.minutes === 'number' && Number.isFinite(args.minutes) ? Math.max(0, args.minutes) : 15;
@@ -693,7 +1227,40 @@ window.__ModuleLoader__.load({
             if (!res.ok || !out?.ok) {
               return { ok: false, reason: out?.reason ?? `http-${res.status}`, message: out?.message };
             }
-            return { ok: true, text: out.text };
+            // 49/50：出口这一层做繁简归一与幻觉过滤（顺序：先归一，名单才匹配得上）
+            const text = cleanSpeech(out.text);
+            // 55：识别到了就直接填进 DSH 输入框（用户按下说话的意图就是「说给模型听」）
+            const inserted = text ? inputBridge.insert(text) : false;
+            return { ok: true, text, inserted };
+          }
+          case 'figure': {
+            /**
+             * 43：换形象（whale 鲸鱼娘 / coo Coo）。
+             *
+             * 换形象要**重建 body**（Coo 与鲸鱼娘的 CSS 与 skin 形态不同），
+             * 因此这里是「建新的、释放旧的」，而不是 `setFigure`。
+             */
+            const want = String(args?.figure ?? '');
+            if (!['whale', 'coo'].includes(want)) {
+              return { ok: false, reason: 'bad-figure', message: 'figure must be whale or coo.' };
+            }
+            try {
+              const changed = await switchFigure(want);
+              return { ok: true, figure: want, changed };
+            } catch (error) {
+              return { ok: false, reason: 'figure-failed', message: String(error?.message ?? error) };
+            }
+          }
+          case 'devices': {
+            // 53：列出可用麦克风。没授权时只有占位名（浏览器隐私要求）。
+            const list = await voice.listDevices();
+            return { ok: true, devices: list, current: voice.device ?? '' };
+          }
+          case 'device': {
+            // 53：选定麦克风。空串 = 系统默认。
+            voice.setDevice(args?.deviceId ?? '');
+            writePrefs({ micDevice: voice.device });
+            return { ok: true, device: voice.device };
           }
           case 'speak': {
             // 朗读一段话：宿主代理到 dsh-xiaomi-tts 的同源路由合成，页面只负责播。
@@ -722,9 +1289,35 @@ window.__ModuleLoader__.load({
           case 'set': {
             const patch = args?.patch ?? {};
             const applied = {};
+            /**
+             * 66：先过安全边界。`ask` 层的项要先问用户，答「可以」才改。
+             *
+             * `confirmed` 由工具侧传（它已经在气泡里问过了）；页面这边自己问
+             * 会与工具侧重复。因此这里只在**没确认**时拦下并回报需要确认。
+             */
+            const needsAsk = (key) => selfTierOf(key) === 'ask' && patch.confirmed !== true;
+            if (needsAsk('scale') || needsAsk('sound') || needsAsk('theme')
+              || needsAsk('bubbleSize') || needsAsk('fontSize') || needsAsk('hoverButtons')
+              || needsAsk('user')) {
+              return {
+                ok: false,
+                reason: 'needs-approval',
+                message: '这几项会影响用户的屏幕、耳朵或称呼，要先问过他才能改。',
+              };
+            }
             if (typeof patch.sizeIndex === 'number') {
               prefs.sizeIndex = patch.sizeIndex;
+              prefs.scale = SIZE_SCALES[prefs.sizeIndex] ?? 1;
               applied.sizeIndex = prefs.sizeIndex;
+              applied.scale = prefs.scale;
+              body.set({ bounds: viewport() });
+              body.resize();
+            }
+            // 65：连续体型
+            if (typeof patch.scale === 'number' && Number.isFinite(patch.scale)) {
+              const s = Math.min(10, Math.max(0.5, patch.scale));
+              prefs.scale = s;
+              applied.scale = s;
               body.set({ bounds: viewport() });
               body.resize();
             }
@@ -752,6 +1345,76 @@ window.__ModuleLoader__.load({
               prefs.fpsIndex = patch.fpsIndex;
               applied.fpsIndex = prefs.fpsIndex;
             }
+            // 56 称呼
+            if (typeof patch.user === 'string') {
+              prefs.user = patch.user.slice(0, 40);
+              applied.user = prefs.user;
+            }
+            // 57 六类声音
+            if (patch.sounds && typeof patch.sounds === 'object') {
+              prefs.sounds = { ...prefs.sounds, ...patch.sounds };
+              applied.sounds = prefs.sounds;
+              applySound();
+            }
+            // 58 鼾声时长
+            if (typeof patch.snoreSeconds === 'number' && Number.isFinite(patch.snoreSeconds)) {
+              prefs.snoreSeconds = Math.max(0, Math.round(patch.snoreSeconds));
+              applied.snoreSeconds = prefs.snoreSeconds;
+              applySound();
+            }
+            // 59/60 气泡框与字号
+            for (const key of ['bubbleSize', 'fontSize']) {
+              if (typeof patch[key] === 'number' && Number.isFinite(patch[key])) {
+                prefs[key] = Math.min(1.6, Math.max(0.8, patch[key]));
+                applied[key] = prefs[key];
+                applyLook();
+              }
+            }
+            // 61 主题三档
+            if (['auto', 'light', 'dark'].includes(patch.theme)) {
+              prefs.theme = patch.theme;
+              applied.theme = prefs.theme;
+              applyLook();
+            }
+            // 35 光晕
+            if (typeof patch.glow === 'number' && Number.isFinite(patch.glow)) {
+              prefs.glow = Math.min(16, Math.max(0, patch.glow));
+              applied.glow = prefs.glow;
+              applyLook();
+            }
+            // 62 悬停按钮
+            if (Array.isArray(patch.hoverButtons)) {
+              const known = patch.hoverButtons.filter((id) => HOVER_IDS.includes(id)).slice(0, 6);
+              if (known.length) {
+                prefs.hoverButtons = known;
+                applied.hoverButtons = known;
+                tools?.rebuild?.();
+              }
+            }
+            // 63 双击输入框
+            if (typeof patch.doubleClickChat === 'boolean') {
+              prefs.doubleClickChat = patch.doubleClickChat;
+              applied.doubleClickChat = prefs.doubleClickChat;
+            }
+            // 64 触摸唤醒
+            if (['poke', 'all', 'none', 'custom'].includes(patch.touchWake)) {
+              prefs.touchWake = patch.touchWake;
+              applied.touchWake = prefs.touchWake;
+            }
+            if (Array.isArray(patch.wakeKinds)) {
+              const kinds = patch.wakeKinds.filter((k) => TOUCH_KINDS.includes(k));
+              prefs.wakeKinds = kinds;
+              applied.wakeKinds = kinds;
+            }
+            // 66 安全边界本身（改它不受它自己约束）
+            if (['off', 'default', 'any', 'custom'].includes(patch.selfAdjust)) {
+              prefs.selfAdjust = patch.selfAdjust;
+              applied.selfAdjust = prefs.selfAdjust;
+            }
+            if (patch.selfAdjustCustom && typeof patch.selfAdjustCustom === 'object') {
+              prefs.selfAdjustCustom = { ...prefs.selfAdjustCustom, ...patch.selfAdjustCustom };
+              applied.selfAdjustCustom = prefs.selfAdjustCustom;
+            }
             if (Object.keys(applied).length) writePrefs(applied);
             return { ok: true, applied };
           }
@@ -778,6 +1441,8 @@ window.__ModuleLoader__.load({
             report({ kind: 'settle', id: frame.id, result }, true);
             return;
           }
+          // 40：对话栈帧
+          if (frame.type === 'lines') { lines.set(frame.lines ?? []); return; }
           // 状态帧（以及任何带 kind 的旧格式）交给状态气泡
           status.set(frame.kind ? frame : frame.status ?? { kind: 'none' });
         };
@@ -873,8 +1538,30 @@ window.__ModuleLoader__.load({
         setCursor('');
       };
 
+      /** 双击输入框的回答是否在等（63）。声明在使用之前——`let` 有暂时性死区。 */
+      let pendingChat = false;
+
+      /**
+       * 63：双击她打开一个输入框，回车后作为一条新消息发给会话。
+       *
+       * 与提问气泡的自填框不同：那个是**回答**她的话，这个是**主动**对她说。
+       * 用 `report({kind:'answer'})` 同一条通道——宿主会把它作为新消息送回会话，
+       * 语义上就是「用户说了这句话」。
+       */
+      const onDoubleClick = (event) => {
+        if (!prefs.doubleClickChat) return;
+        if (!onPet(event.clientX, event.clientY)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        bubble.ask(t('chat.placeholder'), [], { own: true });
+        // 复用提问气泡的自填框：它回车后走 onAnswer，这里把回答当「用户对她说的话」
+        pendingChat = true;
+        lastQuestion = '';
+      };
+
       /** 右键菜单：在她身上或按钮条上时弹出。 */
       const onContextMenu = (event) => {
+        if (CLEAN) return;
         if (!onPet(event.clientX, event.clientY) && !tools.over(event.clientX, event.clientY)) return;
         event.preventDefault();
         event.stopPropagation();
@@ -883,17 +1570,39 @@ window.__ModuleLoader__.load({
 
       /** 键盘：提问时 1–3 选项，Esc 关菜单。 */
       const onKey = (event) => {
+        // 先给气泡：它管提问气泡的 1–3 选项与 Esc 放弃。
+        // 顺序很重要——原来的写法在 Esc 分支里直接 return，于是气泡永远
+        // 收不到 Esc，「按 Esc 放弃提问」从 v1.1 起就没生效过。
+        if (bubble.handleKey(event)) { event.preventDefault(); return; }
         if (event.key === 'Escape') { tools.hideMenu(); return; }
-        // 只在焦点不在输入框里时才吃数字键
+        // 其余按键只在焦点不在输入框里时才吃
         const tag = document.activeElement?.tagName;
         if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-        if (bubble.handleKey(event)) event.preventDefault();
+      };
+
+      /**
+       * 补拦 `click`：浏览器在 pointerdown/pointerup 被阻止后**仍会合成 click**，
+       * 而它不经过我的 pointer 处理器，会一路冒泡到下面的界面。
+       * 实测（dsh 0.2.0-rc.2）：只拦 pointer 事件时，点她本体界面仍会收到 1 次 click。
+       *
+       * 只在她身上、或她自己的按钮条/气泡上拦；其余原样放行。
+       */
+      const onClick = (event) => {
+        if (CLEAN) return;
+        const onPetNow = onPet(event.clientX, event.clientY);
+        if (!onPetNow && !tools.over(event.clientX, event.clientY)) return;
+        // 在按钮条上时不拦——那是她自己的 UI，点击要真的生效
+        if (tools.over(event.clientX, event.clientY)) return;
+        event.preventDefault();
+        event.stopPropagation();
       };
 
       window.addEventListener('pointerdown', onDown, true);
+      window.addEventListener('click', onClick, true);
       window.addEventListener('pointermove', onMove, true);
       window.addEventListener('pointerup', onUp, true);
       window.addEventListener('pointercancel', onUp, true);
+      window.addEventListener('dblclick', onDoubleClick, true);
       window.addEventListener('contextmenu', onContextMenu, true);
       window.addEventListener('keydown', onKey, true);
       document.addEventListener('pointerleave', onLeave);
@@ -926,21 +1635,38 @@ window.__ModuleLoader__.load({
         },
         /** 当前的布局快照（位置、模式、包围盒）。 */
         get layout() { return layout; },
+        /**
+         * 当前的命中圆（只读）。
+         *
+         * 留着它是因为指针判定的问题**只能从这里看**：她是否可被点、按钮条该不该出现，
+         * 都取决于这几个圆。验证脚本与将来的排查都靠它，比读内部状态可靠。
+         */
+        get hits() { return hits; },
         /** 录一段话并交给宿主识别；宿主没装语音插件时返回 `{ ok: false, reason: 'no-speech-plugin' }`。 */
         listen: (seconds) => runCommand('listen', { seconds }),
         /** 让宿主合成一段话并播出。 */
         speak: (text) => runCommand('speak', { text }),
         /** 语音能力现在可不可用（浏览器有没有麦克风 API；插件装没装要调了才知道）。 */
         get voiceReady() { return voice.supported; },
+        /** 53：列出可用麦克风（设置面板用）。 */
+        listDevices: () => runCommand('devices', {}),
+        /** 43：换形象（whale 鲸鱼娘 / coo Coo）。返回是否真的换了。 */
+        switchFigure: (id) => switchFigure(id),
+        /** 43：当前形象 id。 */
+        get figure() { return prefs.figure === 'coo' ? 'coo' : 'whale'; },
+        /** 55：把一段文字填进 DSH 输入框（没有那个能力时返回 false）。 */
+        insertText: (text) => inputBridge.insert(text),
         dispose() {
           stopped = true;
           cancelAnimationFrame(raf);
           setCursor('');
           try { events?.close(); } catch (error) { /* 已经断了 */ }
           window.removeEventListener('pointerdown', onDown, true);
+          window.removeEventListener('click', onClick, true);
           window.removeEventListener('pointermove', onMove, true);
           window.removeEventListener('pointerup', onUp, true);
           window.removeEventListener('pointercancel', onUp, true);
+          window.removeEventListener('dblclick', onDoubleClick, true);
           window.removeEventListener('contextmenu', onContextMenu, true);
           window.removeEventListener('keydown', onKey, true);
           document.removeEventListener('pointerleave', onLeave);
@@ -948,6 +1674,7 @@ window.__ModuleLoader__.load({
           tools.dispose();
           dress.dispose();
           trail.dispose();
+          lines.dispose();
           bubbleEl.remove();
           style.remove();
           try {
@@ -961,9 +1688,28 @@ window.__ModuleLoader__.load({
 
       // 验证脚本与将来的 Agent 接线用；桌面端的页面是单例，不会撞名。
       window.__dshCoopanionPet = api;
+      /**
+       * 55：输入桥挂到 window，供 apply 里的槽注册取用。
+       *
+       * 为什么绕一下：`inputBridge` 在 startPet 内创建（它要用 React，而 React 在
+       * 模块工厂里），而槽注册在 apply 里做（那是 DSH 的 slots 服务可用的地方）。
+       * 两处作用域不同，因此用 window 转一次手。
+       */
+      window.__dshCoopanionPetInput = inputBridgeSingleton;
 
       return api;
     }
+
+    /**
+     * 46：把 `startPet` 暴露给预览页。
+     *
+     * 预览页没有 DSH 的 `__ModuleLoader__`，因此不能走 `load()` 那条路。
+     * 这里把它挂到 window，预览页直接调用即可——它只依赖 React（用来做最外层挂载），
+     * 其余（渲染内核、气泡、装扮、SSE 通道）全是自包含的。
+     */
+    window.__dshCoopanionPetStart = startPet;
+    /** 预览页还要读偏好。 */
+    window.__dshCoopanionPetPrefs = { read: readPrefs, write: writePrefs };
 
     /* ---------- React 挂载点 ---------- */
 
@@ -1024,6 +1770,74 @@ window.__ModuleLoader__.load({
           { name: 'shell.overlay', id: 'coopanion-pet', order: 10 },
           PetOverlay,
         ));
+
+        // 全局说话热键：走 DSH 的 shortcuts 服务（可选注入——拿不到就跳过）。
+        // 用 ctx.inject 的可选形式：服务不存在时不会让整个插件加载失败。
+        ctx.inject(['shortcuts'], (sctx) => {
+          const shortcuts = sctx.get('shortcuts');
+          if (!shortcuts || typeof shortcuts.registerFixed !== 'function') return;
+          // 文案与台词都在 i18n.js 里，这里**单独导入**它——
+          // 不能引用 startPet 内的 `t`：那是另一个作用域的局部变量，
+          // 而这个回调在 apply 作用域里执行（第一版就是这么错的）。
+          Promise.all([import(`${ABS}hotkey.js`), import(`${ABS}i18n.js`)]).then(([{ registerSpeakShortcut }, i18n]) => {
+            sctx.effect(
+              () => registerSpeakShortcut(shortcuts, {
+                // 按下去就让她说一句。她还没加载好时静默跳过。
+                speak: () => {
+                  const pet = window.__dshCoopanionPet;
+                  if (!pet) return;
+                  const lines = [1, 2, 3, 4, 5].map((i) => i18n.t(`pet.line${i}`));
+                  pet.say(lines[Math.floor(Math.random() * lines.length)]);
+                },
+                t: (key) => i18n.t(key),
+              }),
+              'dsh-coopanion-pet: 说话热键',
+            );
+          }).catch((error) => {
+            console.warn('[dsh-coopanion-pet] 说话热键注册失败，其余功能不受影响：', error);
+          });
+        });
+
+        /**
+         * 55：注册进 `conversation.input.activity` 槽，只为拿到 `inputActions`。
+         *
+         * **必须进这个槽**——实测（见 docs/risk-verification.md）`shell.overlay` 的
+         * props 是空接口，而该槽提供完整的 `inputActions`
+         * （`insertText`/`setDraft`/`submit`/`captureInsertion`）以及 `sessionId`。
+         *
+         * UI 刻意极简（一个零尺寸锚点），因为那是输入框旁边的活动区，不该被桌宠占住。
+         * 拿不到这个槽时静默跳过：55 退化成「识别结果只回报给 Agent」。
+         */
+        import(`${ABS}input-bridge.js`).then(({ createInputBridge: makeBridge }) => {
+          // 单例：startPet 与这里必须共用同一个实例，否则槽里存下的 inputActions
+          // 与填输入框时读的不是同一个对象（第一版就是这么错的）。
+          inputBridgeSingleton ??= makeBridge(React, {
+            submitViaHost: (text) => {
+              fetch(REPORT, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ kind: 'speech-submit', text }),
+              }).catch(() => {});
+            },
+          });
+          window.__dshCoopanionPetInput = inputBridgeSingleton;
+          /**
+           * 那个槽是 **single**，官方语音输入插件也会注册它——两者只能有一个。
+           * 因此这里**试一次，失败就静默降级**（走宿主的 speech-submit），
+           * 不刷警告：这是预期内的情况，不是故障。
+           */
+          try {
+            ctx.slots.inject('conversation.input.activity', () => inputBridgeSingleton.register(
+              (cmd, comp) => ctx.slots.register(cmd, comp),
+              'conversation.input.activity',
+            ));
+          } catch (error) {
+            // 槽被占了：识别文本改走会话，功能不丢
+            console.info('[dsh-coopanion-pet] 输入框活动区已被占用，语音结果将直接作为消息送进会话。');
+          }
+        }).catch((error) => {
+          console.warn('[dsh-coopanion-pet] 输入框桥加载失败（语音填入不可用，其余不受影响）：', error);
+        });
 
         // 设置面板是增强项：注册失败不影响桌宠本体。
         // 模块按需加载，避免桌宠本体等她。

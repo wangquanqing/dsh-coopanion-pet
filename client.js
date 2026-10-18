@@ -656,9 +656,23 @@ window.__ModuleLoader__.load({
             return { ok: true, until: quietUntil };
           }
           case 'listen': {
-            // 录一段话交给宿主侧的识别服务。宿主没装语音输入插件时端点回 501，
-            // 这里如实回报 'no-speech-plugin'，不假装听到。
+            // 先问宿主「你能不能听」，再决定要不要申请麦克风。
+            // 顺序很重要：直接录音的话，未装语音插件时用户会先看到一次麦克风权限框，
+            // 白点一次拒绝——而他拒绝完拿到的还是「没装插件」，体验很糟。
             if (!voice.supported) return { ok: false, reason: 'unsupported' };
+            try {
+              const probe = await fetch(SPEECH, { method: 'GET' });
+              const info = await probe.json().catch(() => null);
+              if (!probe.ok || !info?.available) {
+                return {
+                  ok: false,
+                  reason: 'no-speech-plugin',
+                  message: `语音输入不可用：宿主里没有装上带识别能力的插件（${info?.package ?? '@deepseek-ai/dsh-experimental-speech-to-text'}）。装好并重启后她才能听。`,
+                };
+              }
+            } catch (error) {
+              return { ok: false, reason: 'unreachable', message: String(error?.message ?? error) };
+            }
             const seconds = typeof args?.seconds === 'number' && Number.isFinite(args.seconds)
               ? Math.max(0.5, Math.min(args.seconds, 15))
               : 5;

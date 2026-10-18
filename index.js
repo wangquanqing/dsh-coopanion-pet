@@ -381,6 +381,14 @@ export async function apply(ctx) {
           res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
           res.end(JSON.stringify({ ok: false, reason, message }));
         };
+        // GET 是**能力探测**：页面在申请麦克风权限之前先问一句「你能不能听」，
+        // 免得没装语音插件时还去弹权限框、让用户白点一次拒绝。
+        // 这里只回能力状态，不碰音频。
+        if (req.method === 'GET' || req.method === 'HEAD') {
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify({ ok: true, available: speech.available, package: STT_PACKAGE }));
+          return;
+        }
         if (req.method !== 'POST') { fail(405, 'method', 'POST only'); return; }
         if (!speech.available) {
           fail(501, 'no-speech-plugin', `语音输入不可用：宿主里没有装上带识别能力的插件（${STT_PACKAGE}）。装好并重启后她才能听。`);

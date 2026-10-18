@@ -29,12 +29,13 @@ const FADE = 0.4;
  * `deps`：`{ anchor() }` 返回她头顶的锚点与朝向（每帧取一次）。
  */
 export function createLines(deps) {
-  const { anchor } = deps;
+  const { anchor, t } = deps;
 
   const root = document.createElement('div');
   root.className = 'cpn-lines';
   root.setAttribute('aria-live', 'polite');
-  root.setAttribute('aria-label', '最近对话');
+  // 与其余文案一样走 i18n，不硬编码中文（t 由调用方经 deps 传入）
+  root.setAttribute('aria-label', t ? t('settings.linesBubble') : 'Conversation stack');
 
   /** 当前显示的几条：`{ el, role, text, ox, oy, targetX, targetY, alpha }`。 */
   let items = [];

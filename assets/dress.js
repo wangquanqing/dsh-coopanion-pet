@@ -105,6 +105,13 @@ export function createDress(deps) {
     const next = { ...parse(`${scheme}-${outfit}`), ...patch };
     const id = `${next.scheme}-${next.outfit}`;
     if (id === `${scheme}-${outfit}`) return;
+    /**
+     * **先试再落盘**：纹理加载失败或形象包不认这个 id 时，若照旧把偏好写成
+     * 新值，下次开页面还会去恢复这个坏值，于是「一直坏着」——用户以为换过了，
+     * 实际每次都在失败（实测确认过的问题）。
+     */
+    const prevScheme = scheme;
+    const prevOutfit = outfit;
     scheme = next.scheme;
     outfit = next.outfit;
     paint();
@@ -113,6 +120,12 @@ export function createDress(deps) {
       await setScheme(id, { fade: 0.4 });
     } catch (error) {
       console.warn('[dsh-coopanion-pet] 换装失败：', error);
+      // 退回原来的装扮，且**不落盘**
+      scheme = prevScheme;
+      outfit = prevOutfit;
+      paint();
+      hint.hidden = true;
+      return;
     }
     hint.hidden = true;
     onPref('scheme', id);

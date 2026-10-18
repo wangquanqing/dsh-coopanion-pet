@@ -103,6 +103,41 @@ const MIME = {
   '.svg': 'image/svg+xml',
 };
 
+/**
+ * 把文件流安全地送出去。
+ *
+ * **必须挂 error 处理**：`createReadStream(file).pipe(res)` 在文件于
+ * `existsSync` 与流打开之间消失（并发删除、包被 rm、权限变化）时会抛
+ * **未处理的 stream error**，在 Node 里那是 uncaughtException，可能把
+ * 整个宿主进程带崩。这里把「头还没发出去」与「已经发了」分开处理：
+ * 前者可以回 500，后者只能掐断连接。
+ *
+ * @param res - 响应对象。
+ * @param file - 已经过存在性检查的绝对路径。
+ * @param headers - 要写的响应头。
+ */
+function sendFile(res, file, headers) {
+  let headersSent = false;
+  const stream = createReadStream(file);
+  stream.on('error', (error) => {
+    // 已经发出去的头改不了，只能结束连接；没发出去的还能回一个 500
+    if (headersSent) {
+      try { res.destroy(); } catch (e) { /* 已经断了 */ }
+      return;
+    }
+    try {
+      res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('读文件失败');
+    } catch (e) { /* 连接已经没了 */ }
+    // 打一条日志：这类错误若静默，排查时完全看不出发生了什么
+    console.warn('[dsh-coopanion-pet] 读文件失败：', file, error?.message ?? error);
+  });
+  stream.on('open', () => {
+    try { res.writeHead(200, headers); headersSent = true; } catch (e) { headersSent = true; }
+  });
+  stream.pipe(res);
+}
+
 /** 把请求路径解析为 assets 目录内的安全路径；越界返回 null。 */
 function safeResolve(rel) {
   const target = path.normalize(path.join(ASSETS_DIR, rel));
@@ -349,12 +384,11 @@ export async function apply(ctx) {
           // 沙箱 iframe 里 `fetch` 会被 CORS 拦下（`new Image()` 不受限，因此纹理本来
           // 就能加载，但读 model.json 之类要 fetch 的就不行）。放开这一个只读资源路由
           // 的 CORS 没有安全代价——它本来就是对浏览器公开的静态资源。
-          res.writeHead(200, {
+          sendFile(res, file, {
             'Content-Type': type,
             'Cache-Control': 'public, max-age=3600',
             'Access-Control-Allow-Origin': '*',
           });
-          createReadStream(file).pipe(res);
         } catch (error) {
           res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
           res.end(String(error?.message ?? error));
@@ -381,8 +415,7 @@ export async function apply(ctx) {
           res.end('preview page missing');
           return;
         }
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
-        createReadStream(file).pipe(res);
+        sendFile(res, file, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
       },
     });
     wctx.effect(() => disposePreview, 'dsh-coopanion-pet: 预览页');
@@ -401,8 +434,7 @@ export async function apply(ctx) {
         if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); res.end(); return; }
         const file = path.join(HERE, 'client.js');
         if (!existsSync(file)) { res.writeHead(404); res.end('client missing'); return; }
-        res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
-        createReadStream(file).pipe(res);
+        sendFile(res, file, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
       },
     });
     wctx.effect(() => disposePreviewClient, 'dsh-coopanion-pet: 预览页脚本');
@@ -466,16 +498,14 @@ export async function apply(ctx) {
           if (rel === '__entry.js') {
             const file = path.join(pack.dir, pack.entry);
             if (!existsSync(file)) { res.writeHead(404); res.end('entry missing'); return; }
-            res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' });
-            createReadStream(file).pipe(res);
+            sendFile(res, file, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' });
             return;
           }
           // 其余只放素材（图片/音频），防止任意文件被读出去
           const file = resolvePackFile(pack.dir, rel);
           if (!file) { res.writeHead(404); res.end('not found'); return; }
           const type = MIME[path.extname(file).toLowerCase()] ?? 'application/octet-stream';
-          res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'public, max-age=3600', 'Access-Control-Allow-Origin': '*' });
-          createReadStream(file).pipe(res);
+          sendFile(res, file, { 'Content-Type': type, 'Cache-Control': 'public, max-age=3600', 'Access-Control-Allow-Origin': '*' });
         } catch (error) {
           res.writeHead(400); res.end(String(error?.message ?? error));
         }
@@ -525,8 +555,7 @@ export async function apply(ctx) {
             "connect-src 'none'",
           ].join('; ');
         }
-        res.writeHead(200, headers);
-        createReadStream(file).pipe(res);
+        sendFile(res, file, headers);
       },
     });
     wctx.effect(() => disposeFrame, 'dsh-coopanion-pet: 沙箱 frame');
@@ -546,7 +575,14 @@ export async function apply(ctx) {
           // 上限与 IMPORT_MAX 一致（base64 会胀 1/3，因此放宽）
           body = await readJson(req, Math.round(IMPORT_MAX * 1.4));
         } catch (error) {
-          fail(413, 'too-large', String(error?.message ?? error));
+          /**
+           * **按错误类型区分**：原来一律回 413「too-large」，
+           * 连「JSON 非法」也这么报，排查时会被引到错误的方向
+           * （实测确认过的问题）。
+           */
+          const msg = String(error?.message ?? error);
+          if (msg === 'payload too large') fail(413, 'too-large', msg);
+          else fail(400, 'bad-json', msg);
           return;
         }
         const action = String(body?.action ?? 'stage');
@@ -614,6 +650,14 @@ export async function apply(ctx) {
         lastSent = '';
         // 连上先给一份当前状态，免得等下一次变化
         try { res.write(`data: ${JSON.stringify({ type: 'status', ...tracker.snapshot() })}\n\n`); } catch (error) { /* 立刻断了就算了 */ }
+        /**
+         * **对话栈也要补发**：`pushLine` 只在有新消息时推送，而页面刷新后
+         * 是新连接——不补这一份的话，对话栈一直空着，直到下一条消息才出现，
+         * 用户看到的是「刷新把历史清空了」（实测确认过的问题）。
+         */
+        if (lines.length) {
+          try { res.write(`data: ${JSON.stringify({ type: 'lines', lines: lines.map((l) => ({ role: l.role, text: l.text })) })}\n\n`); } catch (error) { /* 同上 */ }
+        }
       },
     });
     wctx.effect(() => disposeEvents, 'dsh-coopanion-pet: 事件流');
@@ -628,6 +672,23 @@ export async function apply(ctx) {
           res.writeHead(code, { 'Content-Type': 'text/plain; charset=utf-8' });
           res.end(message);
         };
+        /**
+         * **GET 用来读宿主侧的真实状态**（目前是 CUA 审批档位）。
+         *
+         * 为什么需要：设置面板原来把档位写进 localStorage 再 POST 一次，
+         * POST 失败静默——于是面板显示的是**本地那份**，而真正生效的是
+         * 宿主政策层那份（默认 `ask-once`）。用户设成最严的
+         * `ask-each-turn` 后重启 DSH，面板还显示「每一轮」，实际更松
+         * （实测确认过的问题）。让面板能读到真值就消除了这个错位。
+         */
+        if (req.method === 'GET' || req.method === 'HEAD') {
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify({
+            ok: true,
+            cua: { level: cuaPolicy.state.level, grantMinutes: cuaPolicy.state.grantMinutes, granted: cuaPolicy.state.granted === true },
+          }));
+          return;
+        }
         if (req.method !== 'POST') { fail(405, 'POST only'); return; }
         let body;
         try {
@@ -756,7 +817,10 @@ export async function apply(ctx) {
           // 15 秒录音 base64 约 640KB，这里给到 1.5MB；解码后的真实大小在下面另有一道校验。
           body = await readJson(req, 1_500_000);
         } catch (error) {
-          fail(413, 'too-large', String(error?.message ?? error));
+          // 同 import 端点：过大与坏 JSON 要分开报，否则排查会被误导
+          const msg = String(error?.message ?? error);
+          if (msg === 'payload too large') fail(413, 'too-large', msg);
+          else fail(400, 'bad-json', msg);
           return;
         }
         // 页面送的是 base64 的 WAV：整段录音，识别单位就是一句

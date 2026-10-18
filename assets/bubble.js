@@ -267,11 +267,20 @@ export function createBubble(els, deps) {
   function handleKey(e) {
     if (!item || item.kind !== 'ask' || !item.optsShown) return false;
     if (e.key === 'Escape') { dismiss(); return true; }
-    const n = Number(e.key);
-    if (Number.isInteger(n) && n >= 1 && n <= (item.buttons?.length ?? 0)) {
-      const i = n - 1;
-      answer(item, { index: i, label: item.options[i] });
-      return true;
+    /**
+     * **严格匹配单个数字键**，不要用 `Number(e.key)`。
+     *
+     * `Number` 会放行 `' 1 '`、`'0x1'`、`'1e0'` 这类字符串（都等于 1），
+     * 而它们不是用户按的「1」——异常键盘布局或输入法可能产出这些
+     * （实测确认过的问题）。这里只认真正的 `'1'`–`'9'`。
+     */
+    if (/^[1-9]$/.test(e.key)) {
+      const n = Number(e.key);
+      if (n <= (item.buttons?.length ?? 0)) {
+        const i = n - 1;
+        answer(item, { index: i, label: item.options[i] });
+        return true;
+      }
     }
     if (item.input && document.activeElement !== item.input && e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
       item.input.focus();

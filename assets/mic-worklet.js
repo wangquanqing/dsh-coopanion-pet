@@ -2,7 +2,8 @@
  * 麦克风采集：把声卡的浮点流重采样成 16kHz 单声道 PCM16，
  * 按 20ms（320 样本）一帧发给页面。
  *
- * 原样取自 Coopanion 的 `web/mic-worklet.js`（未修改）。重采样用「落在每个输出样本
+ * 取自 Coopanion 的 `web/mic-worklet.js`：**代码逐行相同**，只把文件头的
+ * 英文注释换成了中文（因此不是「逐字节相同」）。重采样用「落在每个输出样本
  * 区间内的输入样本取平均」，对语音识别足够。
  */
 class PetMic extends AudioWorkletProcessor {

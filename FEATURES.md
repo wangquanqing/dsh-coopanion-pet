@@ -1,8 +1,16 @@
-# 功能对照清单：上游 Coopanion vs dsh-coopanion-pet v1.4.0
+# 功能对照清单：上游 Coopanion vs dsh-coopanion-pet v1.8.0
 
-> 对照基准：`Pal-AI-Lab/Coopanion` 的 `packages/cortico-world-desktop-pet`
-> （`src/` 4,704 行 + `src/asr/` 1,223 行 + `src/cua/` 1,359 行 + `web/` 4,278 行），
-> 与 `dsh-coopanion-pet` v1.4.0。
+> 对照基准：**本机安装版** `cortico-world-desktop-pet@0.2.0`
+> （`D:\wangq\Documents\Coopanion\resources\app\node_modules\cortico-world-desktop-pet`，
+> `src/` 13,457 行 / 68 文件 + `web/` 466 文件）。
+> **为什么用它而不是 GitHub**：那是你实际在运行的版本，比仓库更贴近真实；
+> 其 `src/` 行数与本文档此前记载的完全一致（`chat.ts` 207、`packs.ts` 329 等），说明基准可信。
+>
+> 与 `dsh-coopanion-pet` **v1.8.0**。
+>
+> **本文档在 2026-10-18 的代码审查中重写过**：此前基准停在 v1.4.0，
+> 把 v1.5–v1.8 已经做完的项仍列为「未做」。逐项核查与修复记录见
+> `docs/code-review.md`。
 >
 > 图例：✅ 已移植 ｜ 🔀 换了实现方式 ｜ ⚠️ 简化/部分 ｜ ❌ 未移植 ｜ ➕ 本插件新增（上游没有）
 
@@ -49,61 +57,63 @@
 
 ---
 
-## 二、未移植 ❌
+## 二、未移植（37 项，按「为什么没搬」分组）
 
-按「为什么没搬」分组。
+> **2026-10-18 审查后的状态**：原 37 项里，**v1.5–v1.8 已经做完 22 项**，
+> 真正未做的只剩 **9 项**（含 4 项「跳过」）。下面用 **✅ 已完成** 标出已做的，
+> 并给出批次。
 
 ### A. 拿不到宿主能力（浏览器够不着）
 
-| # | 上游功能 | 上游位置 | 为什么 |
+| # | 上游功能 | 上游位置 | 状态 |
 | --- | --- | --- | --- |
-| 31 | 透明置顶窗口 | `host/electron-main.cjs`（511 行） | Web 页面没有窗口概念 |
-| 32 | 鼠标穿透租约 | 同 | 同上 |
-| 33 | 托盘、跨屏跟随 | 同 | 同上 |
-| 34 | OBS 叠加导出 | `web/overlay.js` + `host/overlay.cjs` | 需要窗口进程送帧 |
-| 35 | 屏幕采样光晕 | `pet-app.js` probeBackdrop + GDI 采样 | Electron 专属 |
-| 36 | 全屏时自动隐藏 | `window.hideWhenFullscreen` | 需要窗口枚举 |
-| 37 | CUA 引擎与 **12 个 `pet_cua_*` 工具**（子进程 + `koffi` + 原生输入） | `src/cua/engine-child.ts` + `engine/` + `cua/tools.ts` | 浏览器没有子进程；**已改接 dsh-computer-use-win 的 23 个 `mcp__wincu__*` 工具** |
-| 38 | CUA 让位空闲检测 | `userIdleMs` / `maxYieldWaitMs` | 依赖原生 `GetLastInputInfo`，只能近似 |
-| 39 | **真正的全局**说话热键 | `src/asr/hotkey.ts`（koffi 轮询 `GetAsyncKeyState`） | 浏览器拿不到；**已改成 DSH `shortcuts` 服务**（应用失焦不生效，这是有意的取舍） |
+| 31 | 透明置顶窗口 | `host/electron-main.cjs`（511 行） | ❌ 未做（用户选择**搁置**）——Web 页面没有窗口概念；转 `docs/standalone-research.md` |
+| 32 | 鼠标穿透租约 | `host/mouse-lease.cjs` | ❌ 未做（**搁置**）——同上 |
+| 33 | 托盘、跨屏跟随 | `host/electron-main.cjs` | ❌ 未做（**搁置**）——同上 |
+| 34 | OBS 叠加导出 | `web/overlay.js` + `host/overlay.cjs` | ✅ **已完成（v1.5）**——做成纯净模式（`#cpn-clean`，只留本体，便于录屏） |
+| 35 | 屏幕采样光晕 | `pet-app.js` probeBackdrop + GDI 采样 | ✅ **已完成（v1.5）**——CSS 近似（上游是采样屏幕取色，这是简化） |
+| 36 | 全屏时自动隐藏 | `window.hideWhenFullscreen` | ❌ 未做（用户选择**跳过**）——需要窗口枚举 |
+| 37 | CUA 引擎与 12 个 `pet_cua_*` 工具 | `src/cua/engine-child.ts` + `engine/` + `cua/tools.ts` | ✅ **已换实现（v1.4）**——接 dsh-computer-use-win 的 `mcp__wincu__*` 工具 |
+| 38 | CUA 让位空闲检测 | `userIdleMs` / `maxYieldWaitMs` | ❌ 未做（用户选择**跳过**）——依赖原生 `GetLastInputInfo` |
+| 39 | 真正的全局说话热键 | `src/asr/hotkey.ts`（koffi 轮询） | ✅ **已换实现（v1.4）**——走 DSH `shortcuts` 服务（**页内有效**，这是有意取舍） |
 
-### B. 刻意不搬（重复造没意义 / 工作量不划算）
+### B. 刻意不搬（DSH 已有 / 重复造没意义）
 
-| # | 上游功能 | 上游位置 | 为什么 |
+| # | 上游功能 | 上游位置 | 状态 |
 | --- | --- | --- | --- |
-| 40 | 对话页 | `src/chat.ts`（207 行）+ `pet-app.js` 的行栈/游标分页/附件/pending 提升与撤回 | DSH 已有完整会话 UI |
-| 41 | 形象包系统（`figure.json` + 沙箱 frame） | `src/packs.ts`（329 行） | 独立子系统，接近现有全部客户端代码 |
-| 42 | 形象包导入（zip / 文件夹） | `src/pack-import.ts`（213 行） | 同上，需要文件选择 + 沙箱 |
-| 43 | 第二形象 Coo | `web/coo/` | ✅ **已做（v1.7）**：三个文件原样搬入（与上游逐字节相同），设置面板「形象」一行可切换，按需加载 |
-| 44 | 模型下载管理 | `src/runtime/store.ts` + `download.ts`（321 行） | ⚠️ **只做状态显示（v1.7）**：不重复管理下载（模型由 DSH 的语音插件管），设置面板显示识别器与模型就绪状态 |
-| 45 | 本地 HTTP + WebSocket 服务器 | `src/server.ts`（431 行） | 用 DSH 的 `webServer` |
-| 46 | 舞台（浏览器标签里的地板/墙/昼夜按钮） | `web/stage.js` | ✅ **已做（v1.7）**：做成 `/api/dsh-coopanion-pet/preview` 独立预览页（墙 + 地板 + 昼夜按钮 + 跟随鼠标的点阵） |
-| 47 | 装扮页编辑器外观绑定 | `web/appearance.js` | 同上 |
-| 48 | 切句器 + 打包器 | `src/asr/segmenter.ts`（310 行） | **当前不需要**：DSH 的识别接口收整段 WAV，不做流式切分。将来要「边听边识别」再搬 |
-| 49 | 幻觉过滤 | `src/asr/result.ts`（47 行） | 同上，归识别方 |
-| 50 | 繁→简字形归一 | `src/asr/simplify.ts`（76 行） | 同上 |
-| 51 | Windows SAPI 识别 | `src/asr/system-recognizer.ts` + `.ps1`（270 行） | 用 DSH 的 SenseVoice 更准 |
-| 52 | 麦克风模式 hold/toggle/always | `asr.mic.mode` | 本插件是「按需录一段」 |
-| 53 | 麦克风设备选择 | `asr.mic.deviceId` | 用系统默认 |
-| 54 | 边说边识别（流式 interim） | `pet-app.js` onListen | 本插件录完再识别 |
-| 55 | 语音插话直接进输入框 | `conversation.input.activity` 槽 | 本插件只把文本交给工具，不代填输入框 |
+| 40 | 对话页 | `src/chat.ts`（207 行） | ✅ **已完成（v1.8）**——做成**对话栈**（她头顶旁最近 3 条）；完整对话页仍不做（DSH 已有会话 UI） |
+| 41 | 形象包系统 | `src/packs.ts`（329 行） | ✅ **已完成（v1.8）**——沙箱 frame + 清单扫描（**简化版**，见 `docs/code-review.md` 的对照） |
+| 42 | 形象包导入 | `src/pack-import.ts`（213 行） | ✅ **已完成（v1.8）**——选文件夹 → stage → install（**不支持 zip**，见下） |
+| 43 | 第二形象 Coo | `web/coo/` | ✅ **已完成（v1.7）**——三个文件**逐字节相同**，按需加载 |
+| 44 | 模型下载管理 | `src/runtime/store.ts` + `download.ts` | ✅ **部分完成（v1.7）**——只做**状态显示**，不重复管理下载（模型由 DSH 语音插件管） |
+| 45 | 本地 HTTP + WebSocket 服务器 | `src/server.ts`（431 行） | ❌ 未做（**跳过**）——用 DSH 的 `webServer` |
+| 46 | 舞台（地板/墙/昼夜按钮） | `web/stage.js` | ✅ **已完成（v1.7）**——做成独立预览页 `/api/dsh-coopanion-pet/preview` |
+| 47 | 装扮页编辑器外观绑定 | `web/appearance.js`（36 行） | ✅ **已完成（v1.5）**——更细的主题跟随 |
+| 48 | 切句器 + 打包器 | `src/asr/segmenter.ts`（310 行） | ✅ **已完成（v1.6）**——只搬纯逻辑里有用的**按句切分**（流式切分仍不做：DSH 的识别接口收整段 WAV） |
+| 49 | 幻觉过滤 | `src/asr/result.ts`（47 行） | ✅ **已完成（v1.6）**——照搬 5 条正则；**另加一条**「同一字重复 4 次以上」（上游没有） |
+| 50 | 繁→简字形归一 | `src/asr/simplify.ts`（76 行） | ✅ **已完成（v1.6）**——逐字判断表（**不引 OpenCC**，覆盖范围小于上游，已如实标注） |
+| 51 | Windows SAPI 识别 | `src/asr/system-recognizer.ts`（270 行）+ `.ps1`（173 行） | ❌ 未做（**跳过**）——用 DSH 的识别更准 |
+| 52 | 麦克风模式 hold/toggle/always | `asr.mic.mode` | ✅ **已完成（v1.6）**——**按住 Shift+Space 说话**（hold 语义） |
+| 53 | 麦克风设备选择 | `asr.mic.deviceId` | ✅ **已完成（v1.6）**——设置面板可扫描并选择 |
+| 54 | 边说边识别（流式 interim） | `pet-app.js` onListen | ❌ **未做（实测后决定不做）**——分片识别**更慢更不准**（整段 8 秒 935ms vs 分片 2s×4 ≈1.1s，字命中率 92% 且断句错位）；改成录音计时与音量条反馈 |
+| 55 | 语音插话直接进输入框 | `conversation.input.activity` 槽 | ✅ **已完成（v1.6）**——**双路径**：槽可用时填输入框，被官方语音插件占用时（那是 single 槽）降级为把文本作为用户消息送出 |
 
-### C. 细节配置未搬（体量小，需要就说）
+### C. 细节配置
 
-| # | 上游配置 | 默认值 | 现状 |
+| # | 上游配置 | 默认值 | 状态 |
 | --- | --- | --- | --- |
-| 56 | 用户称呼（事件里怎么叫用户） | `user: ''` | 未做 |
-| 57 | 声音分类开关（move/touch/face/snore/talk/ui） | 全 true | 本插件只有总开关 |
-| 58 | 鼾声时长 `snoreSeconds` | 0 | 未做 |
-| 59 | 气泡框大小 `bubbleSize` | 1（0.8–1.6） | 未做 |
-| 60 | 字号 `fontSize` | 1（0.8–1.6） | 未做 |
-| 61 | 手动 dark/light 主题切换 | `theme: 'dark'` | 跟随系统，不可手动切 |
-| 62 | 自定义悬停按钮 `hoverButtons` | `chat,voice` | 固定 6 个 |
-| 63 | 双击打开输入框 | false | 未做 |
-| 64 | 触摸唤醒设置 `touch.wakeOn` | `poke` | 未做（戳她只是视觉反馈） |
-| 65 | 体型连续调节 `scale` | 1（0.5–10） | 三档（小/中/大） |
-| 66 | `selfAdjust` 四级「她自己能改什么」 | `default` | 本插件的 `pet_set` 直接改，无「先问」 |
-| 67 | i18n 其余 9 门语言 | 11 门 | 中英 2 门（词表已留位置） |
+| 56 | 用户称呼 `user` | `''` | ✅ **已完成（v1.5）** |
+| 57 | 声音分类开关（move/touch/face/snore/talk/ui） | 全 true | ✅ **已完成（v1.5）**——六类开关 |
+| 58 | 鼾声时长 `snoreSeconds` | 0 | ✅ **已完成（v1.5）** |
+| 59 | 气泡框大小 `bubbleSize` | 1（0.8–1.6） | ✅ **已完成（v1.5）** |
+| 60 | 字号 `fontSize` | 1（0.8–1.6） | ✅ **已完成（v1.5）** |
+| 61 | 手动 dark/light 主题切换 | `theme: 'dark'` | ✅ **已完成（v1.5）**——三档（跟随/浅/深） |
+| 62 | 自定义悬停按钮 `hoverButtons` | `chat,voice` | ✅ **已完成（v1.5）**——可选 6 个 |
+| 63 | 双击打开输入框 | false | ✅ **已完成（v1.5）** |
+| 64 | 触摸唤醒 `touch.wakeOn` | `poke` | ✅ **已完成（v1.5）**——四档（poke/all/none/custom）与 `wakeKinds` |
+| 65 | 体型连续调节 `scale` | 1（0.5–10） | ⚠️ **简化（v1.5）**——做成三档（小/中/大），**不是连续值**；见 `docs/code-review.md` 的 D1 |
+| 66 | `selfAdjust` 四级「她自己能改什么」 | `default` | ⚠️ **未做（审查后确认该补）**——本插件 `pet_set` **一律直接改**，缺上游的 `ask` 层（「碰到用户屏幕/耳朵/称呼要先问」）。见 `docs/code-review.md` 的 D14 |
+| 67 | i18n 其余 9 门语言 | 11 门 | ✅ **已完成（v1.5 + v1.8 补齐）**——11 门 × **154 键**完整（审查中发现 v1.6–v1.8 新增的 26 键只加进了中英，**已补齐**） |
 
 ---
 
@@ -317,15 +327,20 @@ dsh plugin --profile <你的profile> add dsh-coopanion-pet
 
 ---
 
-## 五、一句话总结
+## 五、一句话总结（2026-10-18 审查后）
 
-- **上游 80 项功能点**：
-  - **已移植 30 项**（第 1–30 项）。其中渲染内核 4 个文件（`kit/rig.js`、`kit/body.js`、
-    `whale/figure.js`、`whale/model.json`）与上游**逐字节相同**；`mic-worklet.js` 代码逐行相同。
-  - **未移植 37 项**（第 31–67 项），分三组：**A. 宿主能力拿不到 9 项**（31–39）、
-    **B. 刻意不搬 16 项**（40–55）、**C. 细节配置未搬 12 项**（56–67）。
-  - **本插件新增 13 项**（第 68–80 项）。
-- **没搬的大件都有明确理由**：对话页（DSH 已有）、形象包系统（工作量不划算）、
-  CUA 引擎与全局热键（宿主能力）、ASR 模型（借 DSH 的插件）。
-- **新增的部分都围绕一个目标**：让桌宠在 DSH 里不只是「站着」，而是**能看、能说、能听、能当审批人**——
-  这四件事上游要么没有，要么是绑死 Electron 的。
+- **上游 80 项功能点**（对照本机安装版 `cortico-world-desktop-pet@0.2.0`）：
+  - **已移植/已换实现 52 项**（原 30 项 + 审查中确认 v1.5–v1.8 又做完 22 项）
+    - 其中 **7 个文件逐字节相同**：`kit/rig.js`、`kit/body.js`、`whale/figure.js`、
+      `whale/model.json`、`coo/coo.js`、`coo/figure.js`、`coo/figure.json`
+      （实测 `diff` 核对，见 `docs/code-review.md` 第二节）
+    - `mic-worklet.js` **代码逐行相同**，只把注释换成了中文
+  - **真正未做 9 项**：31/32/33/39（搁置为独立壳调研）、36/38/45/51（跳过）、
+    54（实测后决定不做）、66（`selfAdjust` 的 ask 层，**审查确认该补**）
+  - **本插件新增 13 项**（68–80，含上游**完全没有**的 TTS 整条链路）
+- **审查中发现的缺陷**：6 高危 + 16 中危 + 10 低危，**已修 6 高 + 11 中 + 3 低**；
+  未修的 5 条都写明了理由（见 `docs/code-review.md` 第七节）
+- **文档与代码不一致 5 处**，全部修正（含本文档自身、`package.json`、`ROADMAP.md`、
+  `mic-worklet.js` 注释、i18n 九门语言）
+- **一句话**：没搬的大件都有明确理由（DSH 已有 / 宿主能力 / 工作量不划算），
+  新增的部分都围绕一个目标——让桌宠在 DSH 里**能看、能说、能听、能当审批人**。

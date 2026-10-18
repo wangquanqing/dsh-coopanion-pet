@@ -51,6 +51,25 @@ const ROW = {
 const HINT = { color: 'var(--dsw-alias-label-secondary, #6A6577)', fontSize: '12px' };
 
 /**
+ * 一段字节 → base64。
+ *
+ * **不能写成 `btoa(String.fromCharCode(...bytes))`**：展开成函数参数有上限
+ * （约 6.5 万～12.5 万个），而形象包里一张纹理 PNG 动辄 200KB 以上，
+ * 会抛 `RangeError: Maximum call stack size exceeded`，导入直接失败
+ * （实测确认过的 bug）。分块转换，每块 0x8000 个字节。
+ *
+ * client.js 里的 `base64Of` 是同一份实现——两处都要用，因此各自留一份
+ * （客户端模块之间不共享工具函数，它们各自独立加载）。
+ */
+function base64Chunked(bytes) {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}
+
+/**
  * 43 + 41：形象选择行（内置 + 第三方包）+ 导入入口。
  *
  * 形象列表要**问宿主**（`GET /dsh-coopanion-pet/packs`）——第三方包是装在
@@ -92,7 +111,7 @@ function FigureRow({ React: R, current, set }) {
         const buf = await f.arrayBuffer();
         // 只发小文件（图片/脚本/清单），大的跳过并说明
         if (buf.byteLength > 8 * 1024 * 1024) continue;
-        payload.push({ path: f.webkitRelativePath || f.name, base64: btoa(String.fromCharCode(...new Uint8Array(buf))) });
+        payload.push({ path: f.webkitRelativePath || f.name, base64: base64Chunked(new Uint8Array(buf)) });
       }
       const res = await fetch('/api/dsh-coopanion-pet/import', {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -294,20 +313,73 @@ export function createSettingsSection(React, prefs) {
     // 偏好存在 localStorage 里，不是 React 状态；改完用 tick 强制重画。
     const [tick, bump] = React.useReducer((n) => n + 1, 0);
     const current = React.useMemo(() => prefs.read(), [tick]);
+    /** CUA 档位与宿主不同步时的提示；空串 = 没问题。 */
+    const [cuaError, setCuaError] = React.useState('');
+    /**
+     * 挂载时**从宿主读一次真实档位**：宿主才是政策层的持有者，
+     * localStorage 里那份可能过时（例如宿主重启后回到默认值）。
+     */
+    React.useEffect(() => { refreshCua(); }, []);
 
     const set = (patch) => {
       prefs.write(patch);
       bump();
-      // CUA 审批档位真正生效的是宿主侧的政策层（它挂在 tools/pre-execute 上），
-      // 因此这里把新值报给宿主，而不是只写进 localStorage。
+      /**
+       * **立刻通知页面**，不等它下一次 32 帧节流的轮询。
+       *
+       * 帧循环每 32 帧拉一次偏好；静止档 12fps 时那是 2.7 秒，改完滑块
+       * 要等两秒多才有反应（实测确认过的延迟）。这里直接调它的入口。
+       */
+      try { window.__dshCoopanionPet?.syncPrefs?.(); } catch (error) { /* 页面没开就算了 */ }
+      /**
+       * CUA 审批档位真正生效的是宿主侧的政策层（它挂在 tools/pre-execute 上），
+       * 因此这里把新值报给宿主，而不是只写进 localStorage。
+       *
+       * **失败要说出来**：原来 `.catch(() => {})` 把失败吞掉，面板显示
+       * 「每一轮」而宿主可能还是旧的更松档位。现在失败会回滚本地显示并提示。
+       */
       if (typeof patch.cuaLevel === 'string') {
+        setCuaError('');
         fetch('/api/dsh-coopanion-pet/report', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ kind: 'cua-level', level: patch.cuaLevel }),
-        }).catch(() => {});
+        }).then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); })
+          .then(() => refreshCua())
+          .catch((error) => {
+            // 回滚：宿主没接受这个档位，面板就不该显示它
+            prefs.write({ cuaLevel: prevCuaLevel });
+            bump();
+            setCuaError(`档位没能交给宿主（${String(error?.message ?? error)}），已回退。`);
+          });
       }
     };
+
+    /** 上一次从宿主读到的 CUA 档位，用来在写入失败时回滚。 */
+    let prevCuaLevel = current.cuaLevel;
+
+    /**
+     * 从宿主读**真实生效**的 CUA 档位，覆盖本地那份。
+     *
+     * 宿主才是政策层的持有者；本地 localStorage 只是显示缓存。
+     * 读不到时保留本地值，并提示一次。
+     */
+    async function refreshCua() {
+      try {
+        const res = await fetch('/api/dsh-coopanion-pet/report');
+        const body = await res.json();
+        if (body?.cua?.level) {
+          prevCuaLevel = body.cua.level;
+          if (current.cuaLevel !== body.cua.level) {
+            prefs.write({ cuaLevel: body.cua.level });
+            bump();
+          }
+          setCuaError('');
+        }
+      } catch (error) {
+        setCuaError(`读不到宿主的档位（${String(error?.message ?? error)}），下面显示的是本地缓存。`);
+      }
+    }
     const on = (key) => current[key] !== false;
 
     /** 一行开关。 */
@@ -509,6 +581,8 @@ export function createSettingsSection(React, prefs) {
 
       // ---- 电脑操作审批 ----
       choice('cuaLevel', t('settings.cua'), cuaLabels(), CUA_LEVELS, t('settings.cuaHint')),
+      // 与宿主不同步时如实说，而不是让面板显示一个并不生效的档位
+      cuaError ? h('div', { key: 'cuaErr', style: { ...HINT, color: 'var(--dsw-alias-text-warning, #B8860B)', width: '100%', textAlign: 'right' } }, cuaError) : null,
 
       // ---- 界面 ----
       choice('lang', t('settings.lang'), langLabels(), LANG_OPTIONS, t('settings.langHint')),

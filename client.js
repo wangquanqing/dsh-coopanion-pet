@@ -247,6 +247,13 @@ window.__ModuleLoader__.load({
         if (!stored || typeof stored !== 'object') return;
         for (const key of SYNCED) {
           if (stored[key] === undefined || stored[key] === prefs[key]) continue;
+          /**
+           * **先记住旧值再写**：`figure` 分支要拿「从哪个形象换到哪个」，
+           * 而 `switchFigure` 的比较基准就是 `prefs.figure` 本身。
+           * 若先赋值再传新值，它会认为「已经是这个形象了」而直接返回 false
+           * ——设置面板换形象就永远不生效（实测确认过的 bug）。
+           */
+          const prevValue = prefs[key];
           prefs[key] = stored[key];
           // 安静期间不要被偏好同步把声音打开
           if (key === 'sound') { if (!isQuiet()) sfx.set(prefs.sound); }
@@ -265,7 +272,11 @@ window.__ModuleLoader__.load({
            * 先于它执行（`syncPrefs` 在帧循环里调用，而帧循环在 startPet 末尾才启动，
            * 但依赖声明顺序容易出错）。直接调 `switchFigure` 更稳。
            */
-          else if (key === 'figure') switchFigure(prefs.figure).catch(() => {});
+          else if (key === 'figure') {
+            // 用上面记下的旧值作起点：switchFigure 会自己把 prefs.figure 改成新的
+            prefs.figure = prevValue;
+            switchFigure(stored[key]).catch(() => {});
+          }
         }
       };
 
@@ -292,13 +303,20 @@ window.__ModuleLoader__.load({
         import(`${ABS}i18n.js`),
       ]);
 
-      // 气泡、按钮条、状态与装扮面板的样式随桌宠一起挂载、一起卸载，避免污染宿主的样式表。
+      /**
+       * 气泡、按钮条、状态与装扮面板的样式随桌宠一起挂载、一起卸载，
+       * 避免污染宿主的样式表。
+       *
+       * **先建好、最后再挂**：`createWhaleFigure` 与后面的 `makeBody`
+       * 都可能抛错（纹理缺失、WebGL 不可用）。若这里先挂上去，那两次
+       * 失败会让整个 `startPet` reject，而失败路径只打一句警告、没有任何
+       * 清理，于是这个 `<style>` 永久留在 head——每重挂一次再加一个
+       * （实测确认过的泄漏）。
+       */
       const style = document.createElement('style');
       style.setAttribute(STYLE_ATTR, 'parts');
       style.textContent = BUBBLE_CSS + TOOLS_CSS + STATUS_CSS + DRESS_CSS + TRAIL_CSS + LINES_CSS;
-      document.head.appendChild(style);
 
-      // 形象包内部按 base 解析纹理与 model.json，必须传它自己的目录（绝对 URL）。
       // 形象包内部按 base 解析纹理与 model.json，必须传它自己的目录（绝对 URL）。
       const figure = await whale.createWhaleFigure(`${ABS}whale/`, {
         kit: { createRig: kit.createRig },
@@ -411,18 +429,29 @@ window.__ModuleLoader__.load({
        * 状态上报是「最新值覆盖」的语义，排队没有意义。
        */
       let reportInFlight = false;
-      const report = (payload, must = false) => {
-        if (reportInFlight && !must) return;
+      /**
+       * 上报一条给宿主。
+       *
+       * @param payload - 要发的帧。
+       * @param must - 真则**绕过「同时只发一条」的节流**（回执之类不能等）。
+       * @param onFail - 发送失败时调用。调用方用它回滚「已上报」的记账，
+       *   否则那条状态会因为「已经发过了」而永远不再发（见 reportState）。
+       * @returns 是否真的发出去了（被节流跳过时为 false）。
+       */
+      const report = (payload, must = false, onFail = null) => {
+        if (reportInFlight && !must) return false;
         reportInFlight = true;
         try {
           fetch(REPORT, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify(payload),
-          }).catch(() => {}).finally(() => { reportInFlight = false; });
+          }).catch(() => { if (onFail) onFail(); }).finally(() => { reportInFlight = false; });
         } catch (error) {
           reportInFlight = false;
+          if (onFail) onFail();
         }
+        return true;
       };
 
       /** 最近问出去的那个问题，回答回传时一并发回去，好在会话里说清是在答什么。 */
@@ -433,7 +462,17 @@ window.__ModuleLoader__.load({
        * 与普通提问的区别：确认的回答**不送回会话**（那是插件之间的问答，
        * 不是用户给模型的话），只回给正在等的那个工具调用。
        */
+      /**
+       * CUA 权限确认的等待槽。**带代次**：宿主侧超时后这里也要清掉，
+       * 否则用户回答别的提问会被误当成确认答案（见 confirm 分支的说明）。
+       */
       let pendingConfirm = null;
+      /** 确认的代次，每开一次加一。 */
+      let confirmEpoch = 0;
+      /** 本地清理定时器。 */
+      let confirmTimer = null;
+      /** 与宿主侧一致的确认超时。 */
+      const CONFIRM_TIMEOUT_MS = 120000;
 
       // 34：纯净模式下气泡也不显示——由 deps 里的钩子拦住所有显示路径
       const bubble = createBubble({ bubble: bubbleEl }, {
@@ -445,10 +484,12 @@ window.__ModuleLoader__.load({
         onAnswer: (a) => {
           // 放弃（Esc）不算回答，不回传。
           if (!a || a.dismissed) return;
-          // CUA 权限确认：只回给等它的那个工具调用，不送回会话
+          // CUA 权限确认：只回给**还在等**的那个工具调用，不送回会话
           if (pendingConfirm) {
             const yes = a.index === 0 || String(a.text ?? a.label ?? '').trim() === '可以';
-            pendingConfirm(yes ? 'yes' : 'no');
+            const { resolve } = pendingConfirm;
+            pendingConfirm = null;   // 答完就清，避免同一槽被复用
+            resolve(yes ? 'yes' : 'no');
             return;
           }
           const text = a.text !== undefined ? String(a.text) : String(a.label ?? '');
@@ -627,6 +668,8 @@ window.__ModuleLoader__.load({
           if (!layout) return null;
           return { x: layout.x, y: (layout.bubble?.y ?? window.innerHeight) - 6, facing: layout.facing ?? 1 };
         },
+        // aria-label 也走 i18n，别硬编码中文
+        t,
       });
       root.appendChild(lines.root);
 
@@ -816,6 +859,9 @@ window.__ModuleLoader__.load({
 
       /** 当前 body。形象切换时会换掉，因此用 `let`。 */
       let body = await makeBody();
+
+      // 所有可能抛错的操作（形象加载、建 body）都过去了，现在才把样式挂上去。
+      document.head.appendChild(style);
 
       /**
        * 43：换形象。**建新的、释放旧的**——不能只换 figure（Coo 的 CSS 与 skin 形态
@@ -1164,9 +1210,18 @@ window.__ModuleLoader__.load({
             const nextScheme = args?.scheme ?? parts[0] ?? 'deepseek';
             const nextOutfit = args?.outfit ?? parts[1] ?? 'maid';
             const id = `${nextScheme}-${nextOutfit}`;
+            /**
+             * **先试再落盘**：与 dress.js 同因——换装失败还把偏好写下去，
+             * 下次开页面会继续恢复这个坏值。这里失败要如实回报，而不是
+             * 吞掉错误后回 `{ ok: true }`（那会让模型以为换成了）。
+             */
+            try {
+              await Promise.resolve(body.setScheme(id, { fade: 0.3 }));
+            } catch (error) {
+              return { ok: false, reason: 'dress-failed', message: String(error?.message ?? error) };
+            }
             prefs.scheme = id;
             writePrefs({ scheme: id });
-            await Promise.resolve(body.setScheme(id, { fade: 0.3 })).catch(() => {});
             return { ok: true };
           }
           case 'confirm': {
@@ -1175,12 +1230,28 @@ window.__ModuleLoader__.load({
             const question = String(args?.question ?? '').slice(0, 200);
             const choices = Array.isArray(args?.choices) ? args.choices.map(String).slice(0, 2) : [];
             if (!question || choices.length < 2) return { ok: false, reason: 'bad-confirm' };
+            /**
+             * **本地也要超时清理**：宿主侧的工具调用有自己的超时
+             * （120s，见 index.js 的 CONFIRM_TIMEOUT_MS），到点它会按
+             * 「不许」处理。但页面里这个 resolver 若一直挂着，用户之后
+             * 回答**别的普通提问**时，onAnswer 会先把答案喂进这个已经没人
+             * 等的 resolver，真正的回答被丢掉（实测确认过的 bug）。
+             *
+             * 因此这里：给每个确认一个**代次**，超时或答完都把 pendingConfirm
+             * 清掉；onAnswer 只认代次仍然匹配的那一个。
+             */
+            const epoch = ++confirmEpoch;
             const choice = await new Promise((resolve) => {
               // 用提问气泡：用户点选项或按 1/2。她不在气泡上答就等工具侧超时。
               bubble.ask(question, choices, { own: false });
-              pendingConfirm = resolve;
+              pendingConfirm = { epoch, resolve };
+              confirmTimer = setTimeout(() => {
+                if (pendingConfirm?.epoch === epoch) pendingConfirm = null;
+              }, CONFIRM_TIMEOUT_MS);
             });
-            pendingConfirm = null;
+            clearTimeout(confirmTimer);
+            confirmTimer = null;
+            if (pendingConfirm?.epoch === epoch) pendingConfirm = null;
             return { ok: true, choice };
           }
           case 'quiet': {
@@ -1306,8 +1377,17 @@ window.__ModuleLoader__.load({
               };
             }
             if (typeof patch.sizeIndex === 'number') {
-              prefs.sizeIndex = patch.sizeIndex;
-              prefs.scale = SIZE_SCALES[prefs.sizeIndex] ?? 1;
+              /**
+               * **夹到合法档位**：越界（如 7）会让 `SIZE_SCALES[7]` 落到
+               * 兜底值 1，于是 UI 的 `sizeLabel` 显示一个不存在的档位，
+               * 而画布尺寸又像「中号」——两处对不上（实测确认过的问题）。
+               */
+              const n = Math.round(patch.sizeIndex);
+              if (n < 0 || n >= SIZE_SCALES.length) {
+                return { ok: false, reason: 'bad-size', message: `sizeIndex 应为 0–${SIZE_SCALES.length - 1}` };
+              }
+              prefs.sizeIndex = n;
+              prefs.scale = SIZE_SCALES[n] ?? 1;
               applied.sizeIndex = prefs.sizeIndex;
               applied.scale = prefs.scale;
               body.set({ bounds: viewport() });
@@ -1424,21 +1504,36 @@ window.__ModuleLoader__.load({
       };
 
       let events = null;
+      /**
+       * **命令帧要串行执行。**
+       *
+       * `onmessage` 是 async 的：两条命令帧会并发跑 `runCommand`，而
+       * `runCommand` 里的提问槽（`lastQuestion`、`pendingChat`、
+       * `pendingConfirm`）都是**单值**——后到的那条会把前一条的状态顶掉
+       * （`bubble.ask` 还会直接关掉当前提问）。实测确认过：模型同时调
+       * `pet_ask` 与 CUA 确认时，两个问题会互相覆盖。
+       *
+       * 这里用一个 Promise 队列把命令帧排队执行；其余帧（状态、对话栈）
+       * 不受影响，照旧即时处理。
+       */
+      let commandQueue = Promise.resolve();
       try {
         events = new EventSource(EVENTS);
-        events.onmessage = async (e) => {
+        events.onmessage = (e) => {
           let frame = null;
           try { frame = JSON.parse(e.data); } catch (error) { return; }
           if (!frame || typeof frame !== 'object') return;
 
           if (frame.type === 'command' && typeof frame.id === 'string') {
-            let result;
-            try {
-              result = await runCommand(frame.op, frame.args ?? {});
-            } catch (error) {
-              result = { ok: false, reason: 'failed' };
-            }
-            report({ kind: 'settle', id: frame.id, result }, true);
+            commandQueue = commandQueue.then(async () => {
+              let result;
+              try {
+                result = await runCommand(frame.op, frame.args ?? {});
+              } catch (error) {
+                result = { ok: false, reason: 'failed' };
+              }
+              report({ kind: 'settle', id: frame.id, result }, true);
+            }).catch(() => { /* 单条失败不能把队列卡死 */ });
             return;
           }
           // 40：对话栈帧
@@ -1446,8 +1541,19 @@ window.__ModuleLoader__.load({
           // 状态帧（以及任何带 kind 的旧格式）交给状态气泡
           status.set(frame.kind ? frame : frame.status ?? { kind: 'none' });
         };
-        // EventSource 自己会重连，这里只把噪音压住
-        events.onerror = () => {};
+        /**
+         * EventSource 自己会重连，因此不必每次报错都喊。
+         * 但**完全静默是有代价的**：鉴权失败（401）或端点不存在时，
+         * Agent 控制与状态气泡会静默失效，用户和模型都看不到原因。
+         * 因此第一次失败打一条警告（之后交给 EventSource 自己重试）。
+         */
+        let sseWarned = false;
+        events.onerror = () => {
+          if (sseWarned) return;
+          sseWarned = true;
+          console.warn('[dsh-coopanion-pet] 事件流断开（状态气泡与 Agent 控制暂时不可用）；'
+            + 'EventSource 会自动重连，若一直不恢复请检查登录状态与 /api/dsh-coopanion-pet/events 端点。');
+        };
       } catch (error) {
         console.warn('[dsh-coopanion-pet] 事件流打不开，状态气泡与 Agent 控制不可用：', error);
       }
@@ -1468,8 +1574,15 @@ window.__ModuleLoader__.load({
         };
         const key = `${payload.x}|${payload.mode}|${payload.scheme}`;
         if (key === lastReport) return;
+        /**
+         * **发送失败要回滚记账。**
+         *
+         * 原来先推进 `lastReport` 再发，而 `report` 在已有请求在途时会直接
+         * 跳过（或 fetch 本身失败）。两种情况都会让这条状态**永远不再发**
+         * ——她的位置/模式在宿主侧就停在了旧值上（实测确认过的问题）。
+         */
         lastReport = key;
-        report(payload);
+        report(payload, false, () => { lastReport = ''; });
       };
 
       /* ---------- 指针 ----------
@@ -1656,6 +1769,14 @@ window.__ModuleLoader__.load({
         get figure() { return prefs.figure === 'coo' ? 'coo' : 'whale'; },
         /** 55：把一段文字填进 DSH 输入框（没有那个能力时返回 false）。 */
         insertText: (text) => inputBridge.insert(text),
+        /**
+         * 立刻把 localStorage 里的偏好拉进来。
+         *
+         * 帧循环本来就每 32 帧拉一次（`tick & 31`），但静止档是 12fps，
+         * 32 帧 ≈ **2.7 秒**——设置面板改完滑块，她要过两秒多才有反应，
+         * 用户会以为没生效（实测确认过的延迟）。面板改完直接调这个。
+         */
+        syncPrefs: () => syncPrefs(),
         dispose() {
           stopped = true;
           cancelAnimationFrame(raf);
@@ -1675,6 +1796,13 @@ window.__ModuleLoader__.load({
           dress.dispose();
           trail.dispose();
           lines.dispose();
+          /**
+           * **voiceUi 也要释放**：它在 window 上挂了 keydown/keyup/blur
+           * 三个监听器（Shift+Space 按住说话）。漏掉这一步的话，每次改语言
+           * 或「显示桌宠」开关（readMountKey 变 → 这一层重建）都会多留
+           * 三个监听器，累积下去会重复触发录音（实测确认过的泄漏）。
+           */
+          try { voiceUi?.dispose?.(); } catch (error) { /* 释放失败不影响其余 */ }
           bubbleEl.remove();
           style.remove();
           try {

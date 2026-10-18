@@ -289,9 +289,22 @@ export function createVoice(deps = {}) {
       const ctx = new AudioContext();
       const chunks = [];
       let stopped = false;
+      /**
+       * **「已经请求停止」标志。**
+       *
+       * 录音要等 `audioWorklet.addModule` 完成才能拿到 `session`，而
+       * `stop()` 只作用于 `session`。若用户在加载完成前就松手
+       * （按住 Shift+Space 立刻松开是常见操作），那次 stop 是**空操作**，
+       * 录音会一直录到 15 秒上限才收尾（实测确认过的问题）。
+       *
+       * 因此这里先记一个标志：`stop()` 无论如何都置位，`record` 在
+       * worklet 就绪后立刻检查它，已置位就直接收尾。
+       */
+      let stopRequested = false;
       let tickTimer = 0;
       const startedAt = Date.now();
       const stop = () => {
+        stopRequested = true;
         if (stopped) return;
         stopped = true;
         if (tickTimer) clearInterval(tickTimer);
@@ -322,6 +335,15 @@ export function createVoice(deps = {}) {
         node.connect(mute).connect(ctx.destination);
 
         session = { stop, startedAt };
+
+        /**
+         * 用户在 worklet 就绪前就松手了 → 现在立刻收尾，不再往下等满 15 秒。
+         * 这里直接返回「空」：这么短的按压本来也识别不出东西。
+         */
+        if (stopRequested) {
+          stop();
+          return { error: 'empty', message: '按得太短，没有录到内容。' };
+        }
 
         // 录音进度：每 100ms 报一次，供界面显示计时（替代原计划的「假流式」）
         if (onTick) {

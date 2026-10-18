@@ -14,6 +14,9 @@
 // 直接导入同名函数会被 createStatus 里的 `let t = 0` 遮蔽掉。
 import { t as text } from './i18n.js';
 
+/** 「思考」状态先压这么久（秒）再显示：很多操作是瞬时的，闪一下反而吵。 */
+const THINK_DELAY = 0.5;
+
 /** 状态种类 → 文案键与图标。图标是 24×24 的线性图形，与内核的线宽约定一致。 */
 const KINDS = {
   think: { key: '', icon: '<circle cx="4" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="20" cy="12" r="1.5"/>' },
@@ -52,6 +55,11 @@ export function createStatus(els, deps) {
   let fadeAt = null;
   /** 本插件的时钟，按帧累加（秒）。 */
   let t = 0;
+  /**
+   * 第一次见到当前这条「思考」状态时的本地时刻（秒）；null = 当前没有思考状态。
+   * 用本地时钟而不是宿主的 `since`，理由见 step() 里的说明。
+   */
+  let thinkSeenAt = null;
 
   /** 换掉气泡内容。`pop` 为真时播一次弹出动画。 */
   function draw(next, pop) {
@@ -105,8 +113,22 @@ export function createStatus(els, deps) {
 
       const next = wanted;
 
-      // 「思考」刚出现时先等半秒：很多操作是瞬时的，闪一下反而吵
-      if (next?.kind === 'think' && t - (next.since ?? 0) / 1000 < 0) return;
+      /**
+       * 「思考」刚出现时先等半秒：很多操作是瞬时的，闪一下反而吵。
+       *
+       * **这里不能用宿主的 `since` 直接比**：宿主给的是 `Date.now()`（毫秒
+       * 纪元时间戳，约 1.7e12），而本模块的 `t` 是页面加载起累加的秒数
+       * （0～100）。`t - since/1000` 恒为约 −1.7e9，于是「正在思考」
+       * **永远不显示**——实测确认过的 bug。
+       *
+       * 改成本地记一份「第一次见到这个 think 时的 t」，用它算延迟。
+       */
+      if (next?.kind === 'think') {
+        if (thinkSeenAt === null) thinkSeenAt = t;
+        if (t - thinkSeenAt < THINK_DELAY) return;
+      } else {
+        thinkSeenAt = null;
+      }
 
       // 同一类活动但对象换了（看 a.ts → 看 b.ts）也要重画，否则文案停在旧文件上
       const same = shown && next && shown.kind === next.kind && shown.target === next.target;

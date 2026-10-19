@@ -28,6 +28,8 @@ import { detectSpeechToText, detectTextToSpeech, TTS_ROUTE, STT_PACKAGE } from '
 import { createCuaPolicy, cuaGate, PERMISSION_LEVELS } from './lib/cua-policy.js';
 import { scanPacks, resolvePackFile, MANIFEST_FILE } from './lib/packs.js';
 import { createImporter, IMPORT_MAX } from './lib/pack-import.js';
+import { createDesktopBridge } from './lib/desktop-bridge.js';
+import { createChatService } from './lib/chat-service.js';
 
 /** Cordis 插件名（loader 诊断用）。 */
 export const name = 'dsh-coopanion-pet';
@@ -357,12 +359,65 @@ export async function apply(ctx) {
     }
   };
 
+  /** 独立窗口的运行状态（设置面板与 pet_desktop 读它）。 */
+  /**
+   * 独立窗口的**最后一条状态日志**（`{ at, line }`）。
+   *
+   * 刻意**不带** `running`/`port` 之类的字段：真实值来自 `desktopBridge.state`，
+   * 若这里也放一份默认值，展开时会把真实值覆盖掉（实测踩过这个坑）。
+   */
+  let desktopStatus = { at: 0, line: '' };
+  /**
+   * 独立窗口的偏好（由页面报来——它存在浏览器 localStorage，宿主读不到）。
+   */
+  let desktopPrefs = { enabled: false, hotkey: 'Alt+Space', electron: '' };
+  /**
+   * 桥接实例。
+   *
+   * 它建在 `webServer` 的注入回调里（那里才拿得到 `webServer` 与 `channel`），
+   * 而工具与设置面板在别的注入回调里——因此用这个外层变量转一手。
+   */
+  let desktopBridge = null;
+
   // 必须走 inject —— apply 运行时刻 webserver 的 fiber 可能尚未创建。
   ctx.inject(['webServer'], (wctx) => {
     const webServer = wctx.get('webServer');
 
     channel = createChannel();
     channel.onChange((st) => { petState = { ...petState, connected: st.connected }; });
+
+    /**
+     * 独立聊天面板的宿主侧服务。
+     *
+     * `getContext` 返回**注入后的 ctx**：会话服务（sessionController / sessionQuery）
+     * 在 `apply` 时刻还没就绪，必须等注入回调里才拿得到（实测确认）。
+     */
+    const chat = createChatService({ getContext: () => wctx });
+
+    /**
+     * 独立桌宠窗口的桥接（Electron）。
+     *
+     * **它让独立窗口里的她拥有与 DSH 页面里相同的能力**——因为窗口连上的是
+     * 同一条 `channel`，于是 `pet_*` 工具、状态气泡、语音、审批全部照旧。
+     *
+     * 桥接服务刻意不在 `/api` 下：独立窗口没有 DSH 的 cookie，
+     * 走 `/api` 会被鉴权拦下（这是做 v1.8 沙箱时实测到的同一个根因）。
+     */
+    const desktop = createDesktopBridge({
+      channel,
+      report: (payload) => handleReport(payload),
+      logger: ctx.logger,
+      pluginDir: HERE,
+      // 聊天面板的三个端点由 bridge 直接实现（背后是 DSH 的会话服务）
+      chat,
+      /**
+       * 状态变更：**并入**而不是整体替换——否则 `running`/`port` 会被
+       * 一条日志行覆盖掉，设置面板就看不到真实状态（实测踩过）。
+       */
+      onStatus: (st) => { desktopStatus = { ...desktopStatus, ...st }; },
+    });
+    desktopBridge = desktop;
+    wctx.effect(() => { desktop.stop().catch(() => {}); }, 'dsh-coopanion-pet: 独立窗口');
 
     /* ---------- 1. 静态资源 ---------- */
 
@@ -664,6 +719,89 @@ export async function apply(ctx) {
 
     /* ---------- 3. 页面回传（上行） ---------- */
 
+    /**
+     * 处理一条页面回传（`/report` 的 body）。
+     *
+     * **抽成独立函数的原因**：独立窗口（Electron）走的是宿主侧另一个本地服务
+     * （见 `lib/desktop-bridge.js`），但**上行的语义完全一样**。抽出来之后
+     * 两条通道共用同一份处理，不必维护两套。
+     *
+     * @returns `{ ok: true }` 或 `{ ok: false, code, message }`。
+     */
+    async function handleReport(body) {
+      if (!body || typeof body !== 'object') return { ok: false, code: 400, message: 'bad payload' };
+      if (body.kind === 'settle' && typeof body.id === 'string') {
+        // 命令回执
+        channel.settle(body.id, body.result ?? {});
+      } else if (body.kind === 'state') {
+        // 桌面侧状态：位置、模式、装扮
+        const next = {};
+        if (typeof body.x === 'number' && Number.isFinite(body.x)) next.x = body.x;
+        if (typeof body.mode === 'string') next.mode = body.mode.slice(0, 32);
+        if (typeof body.scheme === 'string') next.scheme = body.scheme.slice(0, 64);
+        channel.report(next);
+        petState = { ...petState, ...next };
+      } else if (body.kind === 'speech-submit') {
+        /**
+         * 55 的降级方案：把识别文本**作为一条用户消息**送进会话。
+         *
+         * 为什么不用「填进 DSH 输入框」：那条路要 `inputActions`，而它只经
+         * `conversation.input.activity` 提供，**那个槽是 single 且被官方语音输入插件
+         * 独占**（实测：注册会报 "already has a registration"，而 DOM 直改会被
+         * React 受控组件覆盖）。因此改走这条路：语义上等价于「用户说了这句话」，
+         * 只是会直接触发一轮对话，而不是填进输入框等用户自己按回车。
+         */
+        const text = typeof body.text === 'string' ? body.text.trim().slice(0, 500) : '';
+        if (!text) return { ok: false, code: 400, message: 'empty-text' };
+        const agent = activeAgent;
+        if (!agent || typeof agent.followup !== 'function') {
+          return { ok: false, code: 503, message: '当前没有可用的会话，语音内容没能送出去。' };
+        }
+        try {
+          agent.followup({ content: [{ type: 'text', text }] });
+        } catch (error) {
+          return { ok: false, code: 500, message: String(error?.message ?? error) };
+        }
+      } else if (body.kind === 'cua-level') {
+        // 设置面板改了审批档位：宿主侧的政策层是真正生效的那个，因此由它来改。
+        // 页面不持有这个状态（它拿不到政策层对象）。
+        const lv = typeof body.level === 'string' ? body.level : '';
+        if (!PERMISSION_LEVELS.includes(lv)) return { ok: false, code: 400, message: 'bad-level' };
+        cuaPolicy.setLevel(lv);
+        if (typeof body.grantMinutes === 'number') cuaPolicy.setGrantMinutes(body.grantMinutes);
+      } else if (body.kind === 'desktop-prefs') {
+        /**
+         * 页面报来独立窗口的三个偏好（它存在浏览器的 localStorage 里，宿主读不到）。
+         *
+         * 收到后：**按偏好决定要不要拉起独立窗口**。这是「启动时打开独立窗口」
+         * 那个开关的实现——用户勾上，下次 DSH 一起来她就在桌面上。
+         */
+        desktopPrefs = {
+          enabled: body.enabled === true,
+          hotkey: String(body.hotkey ?? 'Alt+Space').slice(0, 60),
+          electron: String(body.electron ?? '').slice(0, 500),
+        };
+        if (desktopBridge && desktopPrefs.enabled) {
+          const r = await desktopBridge.start({ electronPath: desktopPrefs.electron || process.env.DSH_COOPANION_ELECTRON, hotkey: desktopPrefs.hotkey });
+          if (!r?.ok) {
+            ctx.logger?.warn?.('dsh-coopanion-pet: 独立窗口没能启动：' + (r?.reason ?? 'unknown'));
+          }
+        }
+      } else if (body.kind === 'desktop-stop') {
+        // 设置面板点了「关闭」：停掉 bridge（它会连带杀掉 Electron 进程树）
+        if (desktopBridge) await desktopBridge.stop();
+      } else if (body.kind === 'answer') {
+        // 用户回答了一个提问：作为一条新消息送回会话，让 Agent 接着做。
+        const text = typeof body.text === 'string' ? body.text.slice(0, 500) : '';
+        const question = typeof body.question === 'string' ? body.question.slice(0, 200) : '';
+        if (!text) return { ok: false, code: 400, message: 'empty answer' };
+        deliverAnswer(text, question);
+      } else {
+        return { ok: false, code: 400, message: 'unknown kind' };
+      }
+      return { ok: true };
+    }
+
     const disposeReport = webServer.register({
       kind: 'exact',
       path: REPORT,
@@ -686,6 +824,8 @@ export async function apply(ctx) {
           res.end(JSON.stringify({
             ok: true,
             cua: { level: cuaPolicy.state.level, grantMinutes: cuaPolicy.state.grantMinutes, granted: cuaPolicy.state.granted === true },
+            // 独立窗口的状态：设置面板与验证脚本读它
+            desktop: desktopBridge ? { ...desktopStatus, ...desktopBridge.state } : desktopStatus,
           }));
           return;
         }
@@ -700,57 +840,12 @@ export async function apply(ctx) {
         if (!body || typeof body !== 'object') { fail(400, 'bad payload'); return; }
 
         try {
-          if (body.kind === 'settle' && typeof body.id === 'string') {
-            // 命令回执
-            channel.settle(body.id, body.result ?? {});
-          } else if (body.kind === 'state') {
-            // 桌面侧状态：位置、模式、装扮
-            const next = {};
-            if (typeof body.x === 'number' && Number.isFinite(body.x)) next.x = body.x;
-            if (typeof body.mode === 'string') next.mode = body.mode.slice(0, 32);
-            if (typeof body.scheme === 'string') next.scheme = body.scheme.slice(0, 64);
-            channel.report(next);
-            petState = { ...petState, ...next };
-          } else if (body.kind === 'speech-submit') {
-            /**
-             * 55 的降级方案：把识别文本**作为一条用户消息**送进会话。
-             *
-             * 为什么不用「填进 DSH 输入框」：那条路要 `inputActions`，而它只经
-             * `conversation.input.activity` 提供，**那个槽是 single 且被官方语音输入插件
-             * 独占**（实测：注册会报 "already has a registration"，而 DOM 直改会被
-             * React 受控组件覆盖）。因此改走这条路：语义上等价于「用户说了这句话」，
-             * 只是会直接触发一轮对话，而不是填进输入框等用户自己按回车。
-             */
-            const text = typeof body.text === 'string' ? body.text.trim().slice(0, 500) : '';
-            if (!text) { fail(400, 'empty-text'); return; }
-            const agent = activeAgent;
-            if (!agent || typeof agent.followup !== 'function') {
-              fail(503, 'no-session', '当前没有可用的会话，语音内容没能送出去。');
-              return;
-            }
-            try {
-              agent.followup({ content: [{ type: 'text', text }] });
-            } catch (error) {
-              fail(500, 'followup-failed', String(error?.message ?? error));
-              return;
-            }
-          } else if (body.kind === 'cua-level') {
-            // 设置面板改了审批档位：宿主侧的政策层是真正生效的那个，因此由它来改。
-            // 页面不持有这个状态（它拿不到政策层对象）。
-            const lv = typeof body.level === 'string' ? body.level : '';
-            if (!PERMISSION_LEVELS.includes(lv)) { fail(400, 'bad-level'); return; }
-            cuaPolicy.setLevel(lv);
-            if (typeof body.grantMinutes === 'number') cuaPolicy.setGrantMinutes(body.grantMinutes);
-          } else if (body.kind === 'answer') {
-            // 用户回答了一个提问：作为一条新消息送回会话，让 Agent 接着做。
-            const text = typeof body.text === 'string' ? body.text.slice(0, 500) : '';
-            const question = typeof body.question === 'string' ? body.question.slice(0, 200) : '';
-            if (!text) { fail(400, 'empty answer'); return; }
-            deliverAnswer(text, question);
-          } else {
-            fail(400, 'unknown kind');
-            return;
-          }
+          /**
+           * 共用 `handleReport`：**独立窗口（Electron）那条通道走的是同一份逻辑**。
+           * 抽出来之后两条通道的行为必然一致，不必维护两套。
+           */
+          const r = await handleReport(body);
+          if (!r.ok) { fail(r.code ?? 400, r.message ?? 'bad payload'); return; }
           res.writeHead(204);
           res.end();
         } catch (error) {
@@ -759,6 +854,122 @@ export async function apply(ctx) {
       },
     });
     wctx.effect(() => disposeReport, 'dsh-coopanion-pet: 回传通道');
+
+    /**
+     * 独立窗口的启停端点（设置面板与验证脚本用）。
+     *
+     * 为什么要有它：独立窗口的启动要走宿主侧的 Electron 路径探测，
+     * 页面自己做不了。`pet_desktop` 工具走的是同一套。
+     */
+    const disposeDesktopCtl = webServer.register({
+      kind: 'exact',
+      path: '/api/dsh-coopanion-pet/desktop-start',
+      handler: async (req, res) => {
+        if (req.method !== 'POST') { res.writeHead(405); res.end(); return; }
+        try {
+          const out = await desktop.start({ electronPath: process.env.DSH_COOPANION_ELECTRON });
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify(out));
+        } catch (error) {
+          res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ ok: false, reason: String(error?.message ?? error) }));
+        }
+      },
+    });
+    wctx.effect(() => disposeDesktopCtl, 'dsh-coopanion-pet: 独立窗口启停');
+
+    /**
+     * 验证用的命令下发端点（`pet_say` 工具走的是同一条通道）。
+     */
+    const disposeSayTest = webServer.register({
+      kind: 'exact',
+      path: '/api/dsh-coopanion-pet/say-test',
+      handler: async (req, res) => {
+        if (req.method !== 'POST') { res.writeHead(405); res.end(); return; }
+        let body = null;
+        try { body = await readJson(req); } catch (error) { /* 空也算 */ }
+        const text = String(body?.text ?? 'test').slice(0, 200);
+        const r = await channel.command('say', { text }, 8000);
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify(r));
+      },
+    });
+    wctx.effect(() => disposeSayTest, 'dsh-coopanion-pet: 验证端点');
+
+    /* ---------- 3.4 独立聊天面板的三个端点 ----------
+       面板在 Electron 窗口里，拿不到 DSH 的 cookie，因此这三个端点走宿主侧的
+       **非 /api 前缀**（与独立窗口的桥接同因：/api 受鉴权保护）。
+       它们操作的是**同一批会话**——因此面板与 DSH 主面板看到的是同一份对话，
+       这也正是「可以切回主面板」的基础。 */
+
+    const chatFail = (res, r) => {
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify(r));
+    };
+
+    const disposeChatList = webServer.register({
+      kind: 'exact',
+      path: '/api/dsh-coopanion-pet/chat/list',
+      handler: async (req, res) => {
+        chatFail(res, await chat.list());
+      },
+    });
+    wctx.effect(() => disposeChatList, 'dsh-coopanion-pet: 聊天列表');
+
+    /**
+     * **prefix 路由不能带尾斜杠**（v1.8 的包路由踩过同一个坑）：
+     * 带斜杠时 `/chat/history` 本身不匹配，而切片长度也会错位。
+     */
+    const CHAT_HISTORY = '/api/dsh-coopanion-pet/chat/history';
+    const disposeChatHistory = webServer.register({
+      kind: 'prefix',
+      path: CHAT_HISTORY,
+      handler: async (req, res) => {
+        const url = new URL(req.url, 'http://127.0.0.1');
+        const id = decodeURIComponent(url.pathname.slice(CHAT_HISTORY.length)).replace(/^\/+/, '');
+        chatFail(res, await chat.history(id));
+      },
+    });
+    wctx.effect(() => disposeChatHistory, 'dsh-coopanion-pet: 聊天历史');
+
+    /**
+     * 诊断端点：dump 一条会话记录的**原始结构**，好对准字段名。
+     */
+    const disposeChatProbe = webServer.register({
+      kind: 'exact',
+      path: '/api/dsh-coopanion-pet/chat/probe',
+      handler: async (req, res) => {
+        try {
+          const ctx2 = wctx;
+          const ctrl = ctx2.get('sessionController');
+          const q = ctx2.get('sessionQuery');
+          const ac = new AbortController();
+          const raw = await ctrl.list({}, ac.signal);
+          const titles = q ? await q.readTitleSnapshots((raw?.sessions ?? raw?.items ?? []).slice(0, 3).map((x) => x.id ?? x.sessionId), ac.signal).catch((e) => String(e.message)) : null;
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({
+            rawKeys: Object.keys(raw ?? {}),
+            firstRow: (raw?.sessions ?? raw?.items ?? [])[0] ?? null,
+            titles,
+          }, null, 1));
+        } catch (error) {
+          res.writeHead(500); res.end(String(error?.message ?? error));
+        }
+      },
+    });
+    wctx.effect(() => disposeChatProbe, 'dsh-coopanion-pet: 诊断');
+
+    const disposeChatSend = webServer.register({
+      kind: 'exact',
+      path: '/api/dsh-coopanion-pet/chat/send',
+      handler: async (req, res) => {
+        if (req.method !== 'POST') { res.writeHead(405); res.end(); return; }
+        let body = null;
+        try { body = await readJson(req, 64 * 1024); } catch (error) { /* 空也算 */ }
+        chatFail(res, await chat.send(body?.sessionId, body?.text, body?.requestId));
+      },
+    });
+    wctx.effect(() => disposeChatSend, 'dsh-coopanion-pet: 聊天发送');
 
     /* ---------- 3.5 可选：语音识别与合成 ----------
        两个端点都**只在对应能力可用时才工作**，否则回 501 与一句人话原因。
@@ -1034,6 +1245,16 @@ export async function apply(ctx) {
       },
       getPetState: () => petState,
       getCuaPolicy: () => cuaPolicy,
+      /**
+       * 独立窗口的控制接口（`pet_desktop` 工具用）。
+       *
+       * 惰性取：桥接建在 webServer 的注入回调里，而 tools 注入可能更早。
+       */
+      getDesktop: () => ({
+        get state() { return desktopBridge ? { ...desktopBridge.state, ...desktopStatus } : desktopStatus; },
+        start: (opts) => (desktopBridge ? desktopBridge.start(opts) : Promise.resolve({ ok: false, reason: 'no-bridge' })),
+        stop: () => (desktopBridge ? desktopBridge.stop() : Promise.resolve()),
+      }),
     });
 
     for (const [key, def] of Object.entries(defs)) {

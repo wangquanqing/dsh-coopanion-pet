@@ -114,6 +114,16 @@ window.__ModuleLoader__.load({
 
     const DEFAULT_PREFS = {
       enabled: true,
+      /**
+       * 独立窗口（桌面上那个她）的三个偏好。
+       *
+       * 它们**不在 SYNCED 里**：这三个不改变页面内的她，而是告诉**宿主**
+       * 「要不要拉起独立窗口、用什么快捷键、Electron 在哪」——
+       * 由宿主侧读偏好后决定（见 index.js 的 desktop-prefs 端点）。
+       */
+      desktopEnabled: false,
+      desktopHotkey: 'Alt+Space',
+      desktopElectron: '',
       sizeIndex: 1,
       roamIndex: 0,
       sound: true,
@@ -1813,6 +1823,25 @@ window.__ModuleLoader__.load({
           root.remove();
         },
       };
+
+      /**
+       * 把独立窗口的三个偏好报给宿主。
+       *
+       * **为什么由页面报而不是宿主自己读 localStorage**：偏好存在浏览器的
+       * localStorage 里，宿主进程读不到。页面是唯一知道的地方，因此由它转达。
+       * 只在启动时报一次：宿主据此决定要不要拉起窗口、用什么快捷键。
+       */
+      try {
+        fetch(REPORT, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            kind: 'desktop-prefs',
+            enabled: prefs.desktopEnabled === true,
+            hotkey: String(prefs.desktopHotkey ?? 'Alt+Space'),
+            electron: String(prefs.desktopElectron ?? ''),
+          }),
+        }).catch(() => {});
+      } catch (error) { /* 报不上去也不影响本体 */ }
 
       // 验证脚本与将来的 Agent 接线用；桌面端的页面是单例，不会撞名。
       window.__dshCoopanionPet = api;

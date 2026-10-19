@@ -70,6 +70,126 @@ function base64Chunked(bytes) {
 }
 
 /**
+ * 独立窗口（桌面上那个她）的设置行。
+ *
+ * 它比一般的开关复杂，因为独立窗口有**两处状态**：
+ * - 偏好里的「启动时打开」（`desktopEnabled`）——决定下次 DSH 启动时要不要拉起它
+ * - **宿主侧的实际状态**（运行中 / 已连上会话）——只有宿主持有，页面读不到
+ *
+ * 因此这里会**问宿主**（`GET /api/dsh-coopanion-pet/report` 的 `desktop` 字段），
+ * 而不是假装知道。这与 CUA 档位那次的处理是同一条原则：
+ * **只有宿主持有的事实，就不要在本地缓存一份**。
+ */
+function DesktopRow({ React: R, current, set }) {
+  const h = R.createElement;
+  const [state, setState] = R.useState({ loading: true, running: false, online: false, port: 0, line: '', error: '' });
+
+  /** 问宿主当前的独立窗口状态。 */
+  const refresh = async () => {
+    try {
+      const res = await fetch('/api/dsh-coopanion-pet/report');
+      const body = await res.json();
+      const d = body?.desktop ?? {};
+      setState((s) => ({ ...s, loading: false, running: d.running === true, online: d.online === true, port: d.port ?? 0, line: d.line ?? '', error: '' }));
+    } catch (error) {
+      setState((s) => ({ ...s, loading: false, error: String(error?.message ?? error) }));
+    }
+  };
+  R.useEffect(() => {
+    refresh();
+    // 每 3 秒看一眼：窗口可能被右键菜单关掉，面板要跟上
+    const timer = setInterval(refresh, 3000);
+    return () => clearInterval(timer);
+  }, []);
+
+  /** 打开/关闭独立窗口。 */
+  const act = async (what) => {
+    setState((s) => ({ ...s, loading: true }));
+    try {
+      if (what === 'start') {
+        await fetch('/api/dsh-coopanion-pet/desktop-start', { method: 'POST' });
+      } else {
+        // 关闭：让宿主停掉 bridge（它会连带杀掉 Electron 进程树）
+        await fetch('/api/dsh-coopanion-pet/report', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ kind: 'desktop-stop' }),
+        });
+      }
+    } catch (error) { /* 下面的 refresh 会反映真实状态 */ }
+    await new Promise((r) => setTimeout(r, 1500));
+    await refresh();
+  };
+
+  const enabled = current.desktopEnabled !== false;
+  const statusText = state.loading
+    ? t('settings.speechLoading')
+    : (state.running ? t('settings.desktopRunning') : t('settings.desktopStopped'))
+      + (state.running ? ' · ' + (state.online ? t('settings.desktopOnline') : t('settings.desktopOffline')) : '');
+
+  const btn = (label, onClick, disabled) => h('button', {
+    type: 'button', disabled,
+    style: {
+      font: 'inherit', fontSize: '12.5px', padding: '4px 12px', cursor: disabled ? 'default' : 'pointer',
+      border: '1px solid var(--dsw-alias-border-l2, #E2DFE8)', borderRadius: '8px',
+      background: 'transparent', color: 'inherit', opacity: disabled ? 0.45 : 1,
+    },
+    onClick: (e) => { e.preventDefault(); e.stopPropagation(); onClick(); },
+  }, label);
+
+  return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', width: '100%', paddingTop: '4px' } }, [
+    // 分组标题
+    h('div', { key: 'title', style: { ...HINT, fontWeight: 600, color: 'inherit', paddingTop: '6px' } }, t('settings.desktopGroup')),
+    // 启动时打开
+    h('label', { key: 'enabled', style: ROW }, [
+      h('span', { key: 't', style: { display: 'flex', flexDirection: 'column', gap: '2px' } }, [
+        h('span', { key: 'l' }, t('settings.desktopEnabled')),
+        h('span', { key: 'h', style: HINT }, t('settings.desktopEnabledHint')),
+      ]),
+      h('button', {
+        key: 'b', type: 'button', role: 'switch', 'aria-checked': enabled, 'aria-label': t('settings.desktopEnabled'),
+        style: { font: 'inherit', fontSize: '12.5px', padding: '4px 12px', cursor: 'pointer', border: '1px solid var(--dsw-alias-border-l2, #E2DFE8)', borderRadius: '8px', background: enabled ? 'var(--dsw-static-accent, #4da3ff)' : 'transparent', color: enabled ? '#fff' : 'inherit' },
+        onClick: (e) => { e.preventDefault(); e.stopPropagation(); set({ desktopEnabled: !enabled }); },
+      }, enabled ? '开' : '关'),
+    ]),
+    // 状态 + 开关按钮
+    h('div', { key: 'status', style: ROW }, [
+      h('span', { key: 't', style: { display: 'flex', flexDirection: 'column', gap: '2px' } }, [
+        h('span', { key: 'l' }, t('settings.desktopStatus')),
+        h('span', { key: 'h', style: HINT }, statusText + (state.error ? ' · ' + state.error : '')),
+      ]),
+      h('span', { key: 'a', style: { display: 'flex', gap: '6px' } }, [
+        btn(t('settings.desktopStart'), () => act('start'), state.running),
+        btn(t('settings.desktopStop'), () => act('stop'), !state.running),
+      ]),
+    ]),
+    // 快捷键
+    h('label', { key: 'hotkey', style: ROW }, [
+      h('span', { key: 't', style: { display: 'flex', flexDirection: 'column', gap: '2px' } }, [
+        h('span', { key: 'l' }, t('settings.desktopHotkey')),
+        h('span', { key: 'h', style: HINT }, t('settings.desktopHotkeyHint')),
+      ]),
+      h('input', {
+        key: 'i', type: 'text', value: current.desktopHotkey ?? 'Alt+Space',
+        style: { font: 'inherit', fontSize: '12.5px', width: '130px', padding: '4px 8px', textAlign: 'right', border: '1px solid var(--dsw-alias-border-l2, #E2DFE8)', borderRadius: '8px', background: 'transparent', color: 'inherit' },
+        onChange: (e) => set({ desktopHotkey: e.target.value }),
+      }),
+    ]),
+    // Electron 路径
+    h('label', { key: 'ele', style: ROW }, [
+      h('span', { key: 't', style: { display: 'flex', flexDirection: 'column', gap: '2px' } }, [
+        h('span', { key: 'l' }, t('settings.desktopElectron')),
+        h('span', { key: 'h', style: HINT }, t('settings.desktopElectronHint')),
+      ]),
+      h('input', {
+        key: 'i', type: 'text', value: current.desktopElectron ?? '', placeholder: '(自动)',
+        style: { font: 'inherit', fontSize: '12.5px', width: '200px', padding: '4px 8px', textAlign: 'right', border: '1px solid var(--dsw-alias-border-l2, #E2DFE8)', borderRadius: '8px', background: 'transparent', color: 'inherit' },
+        onChange: (e) => set({ desktopElectron: e.target.value }),
+      }),
+    ]),
+  ]);
+}
+
+/**
  * 43 + 41：形象选择行（内置 + 第三方包）+ 导入入口。
  *
  * 形象列表要**问宿主**（`GET /dsh-coopanion-pet/packs`）——第三方包是装在
@@ -583,6 +703,9 @@ export function createSettingsSection(React, prefs) {
       choice('cuaLevel', t('settings.cua'), cuaLabels(), CUA_LEVELS, t('settings.cuaHint')),
       // 与宿主不同步时如实说，而不是让面板显示一个并不生效的档位
       cuaError ? h('div', { key: 'cuaErr', style: { ...HINT, color: 'var(--dsw-alias-text-warning, #B8860B)', width: '100%', textAlign: 'right' } }, cuaError) : null,
+
+      // ---- 独立窗口（桌面上那个她）----
+      h(DesktopRow, { key: 'desktop', React, current, set }),
 
       // ---- 界面 ----
       choice('lang', t('settings.lang'), langLabels(), LANG_OPTIONS, t('settings.langHint')),

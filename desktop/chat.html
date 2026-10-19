@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>桌宠 · 对话</title>
+<!--
+  独立聊天面板。
+
+  **它不重新实现对话逻辑**：会话列表、历史、发送全部走宿主侧那三个端点
+  （`chat/list`、`chat/history/<id>`、`chat/send`），而它们背后是 DSH 的
+  会话服务。因此面板里的对话与 DSH 主面板里的是**同一批会话**——
+  这正是「可以切回主面板」的基础。
+
+  界面语言刻意贴近 DSH：深色、圆角、等宽代码块。
+-->
+<style>
+  :root {
+    --bg: #1B1626; --panel: #221C30; --line: #332C45; --text: #EDEAF4;
+    --dim: #9A93AB; --accent: #4D6BFE; --bubble: #2A2340;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #FAF9FC; --panel: #FFFFFF; --line: #E2DFE8; --text: #1B1626; --dim: #6B6478; --bubble: #F1EEF7; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 13.5px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
+  #app { display: flex; height: 100%; }
+
+  /* 左侧：会话列表 */
+  #side { width: 220px; flex: none; border-right: 1px solid var(--line); background: var(--panel);
+    display: flex; flex-direction: column; }
+  #side header { padding: 12px 14px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 8px; }
+  #side header b { font-size: 13px; font-weight: 600; flex: 1; }
+  #side button { font: inherit; color: var(--dim); background: none; border: 0; cursor: pointer; padding: 4px 6px; border-radius: 6px; }
+  #side button:hover { background: var(--bubble); color: var(--text); }
+  #list { overflow-y: auto; flex: 1; padding: 6px; }
+  .item { padding: 8px 10px; border-radius: 8px; cursor: pointer; margin-bottom: 2px; }
+  .item:hover { background: var(--bubble); }
+  .item.on { background: var(--accent); color: #fff; }
+  .item .t { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .d { font-size: 11px; color: var(--dim); margin-top: 2px; }
+  .item.on .d { color: rgba(255,255,255,.75); }
+
+  /* 右侧：消息与输入 */
+  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #main header { padding: 12px 16px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 10px; }
+  #main header b { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #main header .sp { flex: 1; }
+  #main header button { font: inherit; font-size: 12.5px; color: var(--dim); background: none;
+    border: 1px solid var(--line); border-radius: 7px; padding: 4px 10px; cursor: pointer; }
+  #main header button:hover { color: var(--text); border-color: var(--dim); }
+
+  #msgs { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .msg { max-width: 88%; padding: 9px 12px; border-radius: 12px; white-space: pre-wrap; word-break: break-word; }
+  .msg.user { align-self: flex-end; background: var(--accent); color: #fff; }
+  .msg.assistant { align-self: flex-start; background: var(--bubble); }
+  .msg.tool { align-self: flex-start; background: none; border: 1px dashed var(--line);
+    color: var(--dim); font-size: 12px; padding: 5px 10px; border-radius: 999px; }
+  .empty { color: var(--dim); text-align: center; margin: auto; font-size: 13px; }
+
+  #compose { border-top: 1px solid var(--line); padding: 10px 12px; display: flex; gap: 8px; align-items: flex-end; }
+  #compose textarea { flex: 1; resize: none; min-height: 38px; max-height: 140px; padding: 9px 11px;
+    background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px;
+    font: inherit; outline: none; }
+  #compose textarea:focus { border-color: var(--accent); }
+  #compose button { flex: none; height: 38px; padding: 0 16px; background: var(--accent); color: #fff;
+    border: 0; border-radius: 10px; font: inherit; cursor: pointer; }
+  #compose button:disabled { opacity: .45; cursor: default; }
+  #hint { padding: 0 12px 8px; color: var(--dim); font-size: 11.5px; min-height: 16px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="side">
+    <header>
+      <b>会话</b>
+      <button id="refresh" title="刷新">↻</button>
+    </header>
+    <div id="list"></div>
+  </div>
+  <div id="main">
+    <header>
+      <b id="title">未选择会话</b>
+      <span class="sp"></span>
+      <button id="to-dsh" title="在 DSH 主窗口里打开">在 DSH 中打开</button>
+    </header>
+    <div id="msgs"><div class="empty">从左边选一条会话</div></div>
+    <div id="hint"></div>
+    <div id="compose">
+      <textarea id="input" placeholder="写点什么…（Enter 发送，Shift+Enter 换行）" rows="1"></textarea>
+      <button id="send" disabled>发送</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+const API = '/api/dsh-coopanion-pet/chat';
+let current = null;       // 当前会话 id
+let sessions = [];        // 会话列表
+
+const el = (id) => document.getElementById(id);
+const listEl = el('list'), msgsEl = el('msgs'), titleEl = el('title');
+const inputEl = el('input'), sendEl = el('send'), hintEl = el('hint');
+
+function hint(text) { hintEl.textContent = text || ''; }
+
+/** 时间 → 相对描述。 */
+function when(ms) {
+  if (!ms) return '';
+  const d = Date.now() - ms;
+  if (d < 60_000) return '刚刚';
+  if (d < 3_600_000) return Math.floor(d / 60_000) + ' 分钟前';
+  if (d < 86_400_000) return Math.floor(d / 3_600_000) + ' 小时前';
+  return new Date(ms).toLocaleDateString();
+}
+
+/** 拉会话列表。 */
+async function loadSessions() {
+  try {
+    const r = await fetch(API + '/list');
+    const b = await r.json();
+    if (!b?.ok) { hint('会话列表读不到：' + (b?.message ?? b?.reason ?? '未知')); return; }
+    sessions = b.sessions ?? [];
+    renderList();
+  } catch (error) {
+    hint('会话列表请求失败：' + String(error).slice(0, 120));
+  }
+}
+
+function renderList() {
+  listEl.innerHTML = '';
+  if (!sessions.length) {
+    listEl.innerHTML = '<div class="empty" style="font-size:12px">没有会话</div>';
+    return;
+  }
+  for (const s of sessions) {
+    const d = document.createElement('div');
+    d.className = 'item' + (s.id === current ? ' on' : '');
+    d.innerHTML = '<div class="t"></div><div class="d"></div>';
+    d.querySelector('.t').textContent = s.title || s.id.slice(0, 12);
+    d.querySelector('.d').textContent = when(s.updatedAt);
+    d.onclick = () => openSession(s.id);
+    listEl.appendChild(d);
+  }
+}
+
+/** 打开一条会话：读历史。 */
+async function openSession(id) {
+  current = id;
+  renderList();
+  const s = sessions.find((x) => x.id === id);
+  titleEl.textContent = s?.title ?? id.slice(0, 12);
+  msgsEl.innerHTML = '<div class="empty">读取中…</div>';
+  try {
+    const r = await fetch(API + '/history/' + encodeURIComponent(id));
+    const b = await r.json();
+    if (!b?.ok) { msgsEl.innerHTML = ''; hint('历史读不到：' + (b?.message ?? b?.reason ?? '未知')); return; }
+    renderMessages(b.messages ?? []);
+    hint('');
+    sendEl.disabled = false;
+  } catch (error) {
+    hint('历史请求失败：' + String(error).slice(0, 120));
+  }
+}
+
+function renderMessages(msgs) {
+  msgsEl.innerHTML = '';
+  if (!msgs.length) {
+    msgsEl.innerHTML = '<div class="empty">这条会话还没有消息</div>';
+    return;
+  }
+  for (const m of msgs) {
+    const d = document.createElement('div');
+    d.className = 'msg ' + (m.role === 'tool' ? 'tool' : m.role);
+    d.textContent = m.role === 'tool' ? '⚙ ' + m.text : m.text;
+    msgsEl.appendChild(d);
+  }
+  msgsEl.scrollTop = msgsEl.scrollHeight;
+}
+
+/** 发一条。 */
+async function send() {
+  const text = inputEl.value.trim();
+  if (!text || !current) return;
+  sendEl.disabled = true;
+  inputEl.value = '';
+  // 乐观显示（DSH 接受后刷新历史会以真实内容替换）
+  const d = document.createElement('div');
+  d.className = 'msg user';
+  d.textContent = text;
+  msgsEl.appendChild(d);
+  msgsEl.scrollTop = msgsEl.scrollHeight;
+  hint('发送中…');
+  try {
+    const r = await fetch(API + '/send', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: current, text, requestId: 'pet-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) }),
+    });
+    const b = await r.json();
+    if (!b?.ok) {
+      hint('没发出去：' + (b?.message ?? b?.reason ?? '未知'));
+      d.style.opacity = '.5';
+    } else {
+      hint('已发送——她在 DSH 里开始处理了');
+      // 稍后刷新一次，让回复出现（轮询到有回复为止）
+      pollForReply();
+    }
+  } catch (error) {
+    hint('发送失败：' + String(error).slice(0, 120));
+    d.style.opacity = '.5';
+  } finally {
+    sendEl.disabled = false;
+    inputEl.focus();
+  }
+}
+
+/** 轮询等回复（最多 90 秒）。 */
+let pollTimer = null;
+function pollForReply() {
+  if (pollTimer) clearInterval(pollTimer);
+  let tries = 0;
+  const before = msgsEl.querySelectorAll('.msg').length;
+  pollTimer = setInterval(async () => {
+    tries++;
+    if (tries > 45) { clearInterval(pollTimer); pollTimer = null; hint('等了一会儿还没回，可以点刷新看看'); return; }
+    try {
+      const r = await fetch(API + '/history/' + encodeURIComponent(current));
+      const b = await r.json();
+      if (b?.ok && (b.messages?.length ?? 0) > before) {
+        renderMessages(b.messages);
+        hint('');
+        clearInterval(pollTimer); pollTimer = null;
+      }
+    } catch (error) { /* 下一轮再试 */ }
+  }, 2000);
+}
+
+/* ---------- 事件绑定 ---------- */
+
+el('refresh').onclick = loadSessions;
+el('send').onclick = send;
+inputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+});
+// 输入框自增高
+inputEl.addEventListener('input', () => {
+  inputEl.style.height = 'auto';
+  inputEl.style.height = Math.min(140, inputEl.scrollHeight) + 'px';
+});
+// 「在 DSH 中打开」：让主进程打开 DSH 主窗口
+el('to-dsh').onclick = () => {
+  try { window.dshPetDesktop?.openMainWindow?.(); } catch (error) { hint('打不开 DSH 窗口'); }
+};
+
+// 主进程让她打开面板时（右键菜单）自动选第一条会话
+window.__dshPetOpenChat = () => {
+  if (!current && sessions.length) openSession(sessions[0].id);
+};
+
+loadSessions();
+// 每 15 秒刷新一次列表（她在 DSH 里新开的会话也能出现）
+setInterval(loadSessions, 15000);
+</script>
+</body>
+</html>

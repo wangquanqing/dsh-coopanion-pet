@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>桌宠</title>
+<!--
+  独立窗口的页面。
+
+  **它不重新实现桌宠**：挂载方式与插件里的「独立预览页」同源——用同一个
+  `__ModuleLoader__` 桩（`assets/preview-client.js`），加载同一个 `client.js`。
+  因此窗口里的她与 DSH 页面里的她**是同一套代码、同一个形象**。
+
+  页面本身必须是**全透明**的：窗口用 `transparent: true`，这里再把背景清掉，
+  于是只有她（和她的气泡、按钮条）可见，其余像素真穿透。
+-->
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: transparent; overflow: hidden; }
+  /* 独立窗口里没有 DSH 的界面，鼠标事件默认穿透到桌面 */
+  body { pointer-events: none; }
+  /* 她自己的界面元素要能接点击 */
+  #host { pointer-events: none; }
+  /* 出错时把原因显示出来（开发期很有用；正式使用几乎不会出现） */
+  #err { position: fixed; left: 8px; top: 8px; color: #ff6b6b; font: 12px/1.5 monospace;
+         background: rgba(0,0,0,.7); padding: 6px 10px; border-radius: 6px; display: none; max-width: 60vw; }
+</style>
+</head>
+<body>
+<div id="host"></div>
+<div id="err"></div>
+
+<script type="module">
+import { startPreview } from '/api/dsh-coopanion-pet/assets/preview-client.js';
+
+const errEl = document.getElementById('err');
+function showErr(text) {
+  errEl.style.display = 'block';
+  errEl.textContent = String(text).slice(0, 400);
+}
+
+/**
+ * 穿透判定的上报。
+ *
+ * 窗口默认 `setIgnoreMouseEvents(true, { forward: true })`，因此页面仍收得到
+ * `mousemove`。这里把「光标是否落在她（或她的界面）上」告诉主进程——
+ * **这就是「点空白穿透、点她能点」的实现。**
+ *
+ * 判据与插件主路径一致：用渲染内核回报的命中圆，加上她自己的界面元素。
+ */
+let lastOn = null;
+function reportInteractive() {
+  const api = window.__dshCoopanionPet;
+  if (!api) return;
+  // 她的命中圆（内核回报）+ 悬停时出现的按钮条与气泡
+  const overUi = document.querySelector('.cpn-tools:not([hidden]), .cpn-bubble:not([hidden]), .cpn-menu:not([hidden]), .cpn-dress:not([hidden]), .cpn-status:not([hidden])');
+  const on = !!(window.__dshPetPointerOn || overUi);
+  if (on === lastOn) return;
+  lastOn = on;
+  try { window.dshPetDesktop?.setInteractive(on); } catch (error) { /* 桥不在就算了 */ }
+}
+
+// 每秒看几次即可（判定很轻），避免每帧都发 IPC
+setInterval(reportInteractive, 120);
+document.addEventListener('mousemove', () => { setTimeout(reportInteractive, 0); }, true);
+
+/**
+ * 在她身上右键 → 弹独立窗口自己的菜单。
+ *
+ * 与 DSH 页面里的右键菜单（她自己的 8 项：装扮、状态气泡、音效…）**不冲突**：
+ * 这里处理的是「光标在她身上」的情况，交给主进程弹窗口级菜单；
+ * 她自己的菜单仍由 client.js 处理（下面 capture 阶段先放行）。
+ */
+document.addEventListener('contextmenu', (e) => {
+  // 只有在她身上才弹窗口菜单；她自己的界面元素（气泡/按钮条）走 client.js 的菜单
+  if (window.__dshPetPointerOn) {
+    try { window.dshPetDesktop?.openMenu?.(); } catch (error) { /* 桥不在就算了 */ }
+  }
+}, true);
+
+/** 主进程让她做的事（右键菜单里的「让她说话」「打开对话面板」）。 */
+try {
+  window.dshPetDesktop?.onCommand?.((payload) => {
+    if (payload?.kind === 'say') {
+      // 与按钮条上的「说话」同一个动作
+      const api = window.__dshCoopanionPet;
+      const lines = ['我在呢。', '需要我帮忙吗？', '我在这儿陪你。'];
+      try { api?.say?.(lines[Math.floor(Math.random() * lines.length)]); } catch (error) { /* 忽略 */ }
+    } else if (payload?.kind === 'chat') {
+      // 第 4 步：打开独立聊天面板
+      window.__dshPetOpenChat?.();
+    }
+  });
+} catch (error) { /* 桥不在就算了 */ }
+
+// 光标位置 → 命中判定（供上面的 reportInteractive 用）
+document.addEventListener('mousemove', (e) => {
+  const api = window.__dshCoopanionPet;
+  const hits = api?.hits ?? [];
+  window.__dshPetPointerOn = hits.some((c) => Math.hypot(e.clientX - c.x, e.clientY - c.y) < c.r);
+}, true);
+
+startPreview(document.getElementById('host'))
+  .then(() => { window.__dshPetDesktopReady = true; })
+  .catch((error) => showErr('桌宠没能挂起来：' + (error && error.message ? error.message : error)));
+</script>
+</body>
+</html>

@@ -50,6 +50,42 @@
 - 包放在 `~/.dsh/coopanion-pet-packs/<id>/`，插件升级不会丢
 - **只支持「选文件夹」**：不引第三方 zip 库（省一个依赖），zip 请先解压再选
 
+**独立窗口（桌面上那个她）** `[已验证]`
+
+她可以**不依赖 DSH 窗口**待在桌面上——一个真透明、无边框、置顶、可穿透的窗口。
+
+| 能力 | 说明 |
+| --- | --- |
+| **真透明** | `transparent: true` + `backgroundColor: '#00000000'`，只有她和她的气泡可见 |
+| **鼠标穿透** | 默认穿透到桌面；光标移到她身上才接点击（`setIgnoreMouseEvents(true, {forward:true})` + 命中判定） |
+| **置顶** | `setAlwaysOnTop(true, 'floating')`，浮在普通窗口之上 |
+| **跨屏** | `setVisibleOnAllWorkspaces`，全屏时也在 |
+| **全局快捷键** | 默认 `Alt+Space` 唤出/收起——**DSH 没聚焦时也管用** |
+| **右键菜单** | 打开 DSH 主窗口 / 打开对话面板 / 让她说话 / 隐藏 / 穿透模式 / 置顶 / 退出 |
+| **托盘** | 点图标唤出/收起，右键同一套菜单 |
+| **独立聊天面板** | 列会话、读历史、发消息——**与 DSH 主面板操作的是同一批会话** |
+| **13 个 `pet_*` 工具** | 含新增的 `pet_desktop`（读状态/启停独立窗口） |
+
+**架构**（与上游 Coopanion、takboo/dsh-coopanion 同源）：
+
+```
+DSH 宿主进程
+  └─ 插件 index.js
+       ├─ 起一个本地 bridge 服务（刻意不在 /api 下 → 不走鉴权）
+       └─ spawn Electron 子进程（desktop/main.cjs）
+            ├─ 自己的静态服务（镜像 DSH 路由形状 → client.js 一个字不用改）
+            ├─ 宠物窗口（透明/穿透/置顶）
+            └─ 聊天面板窗口
+```
+
+**关键：独立窗口连的是同一条 `channel`**，因此 `pet_*` 工具、状态气泡、语音、审批
+**全部照旧可用**——不是另一套。
+
+**DSH 没开时**：她仍会出现（静态资源由 Electron 自己的服务提供），只是没有「Agent 指挥」的能力。
+
+**Electron 运行时**：作为 `optionalDependencies` 声明，npm 安装时自动带（约 151 MB）。
+也可以自己在设置里指定路径；**找不到时独立窗口不可用，但本体照常**——不假装成功。
+
 **独立预览页**
 
 访问 `/api/dsh-coopanion-pet/preview` 打开一个**带地板与墙的干净页面**，
@@ -186,7 +222,7 @@
 dsh plugin --profile <你的profile> add dsh-coopanion-pet
 ```
 
-指定版本：`dsh plugin --profile <你的profile> add dsh-coopanion-pet@1.8.1`
+指定版本：`dsh plugin --profile <你的profile> add dsh-coopanion-pet@1.9.0`
 
 **从 GitHub 装**（跟仓库 main 分支）：
 

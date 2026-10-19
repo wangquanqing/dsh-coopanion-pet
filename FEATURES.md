@@ -1,4 +1,4 @@
-# 功能对照清单：上游 Coopanion vs dsh-coopanion-pet v1.8.1
+# 功能对照清单：上游 Coopanion vs dsh-coopanion-pet v1.9.0
 
 > 对照基准：**本机安装版** `cortico-world-desktop-pet@0.2.0`
 > （`D:\wangq\Documents\Coopanion\resources\app\node_modules\cortico-world-desktop-pet`，
@@ -6,7 +6,7 @@
 > **为什么用它而不是 GitHub**：那是你实际在运行的版本，比仓库更贴近真实；
 > 其 `src/` 行数与本文档此前记载的完全一致（`chat.ts` 207、`packs.ts` 329 等），说明基准可信。
 >
-> 与 `dsh-coopanion-pet` **v1.8.1**。
+> 与 `dsh-coopanion-pet` **v1.9.0**。
 >
 > **本文档在 2026-10-18 的代码审查中重写过**：此前基准停在 v1.4.0，
 > 把 v1.5–v1.8 已经做完的项仍列为「未做」。逐项核查与修复记录见

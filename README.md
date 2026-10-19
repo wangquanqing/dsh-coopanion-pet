@@ -83,6 +83,8 @@ DSH 宿主进程
 
 **DSH 没开时**：她仍会出现（静态资源由 Electron 自己的服务提供），只是没有「Agent 指挥」的能力。
 
+**怎么用起来 / 怎么排查**：见 [`docs/standalone-usage.md`](docs/standalone-usage.md)（操作指南 + 常见现象对照表）。
+
 **Electron 运行时**：作为 `optionalDependencies` 声明，npm 安装时自动带（约 151 MB）。
 也可以自己在设置里指定路径；**找不到时独立窗口不可用，但本体照常**——不假装成功。
 

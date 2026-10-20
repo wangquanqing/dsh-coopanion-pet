@@ -1,6 +1,7 @@
-# 交接：独立窗口（v1.9.0）
+# 交接：独立窗口（v1.9.1 起）
 
-> 2026-10-20。这份是**给使用者的操作指南**；
+> 2026-10-20（v1.9.0 首发，v1.9.1 随 `pet_set` 同意流程一并发布）。
+> 这份是**给使用者的操作指南**；
 > 实现细节与踩坑记录见 `standalone-implementation.md`。
 
 ---
@@ -11,10 +12,10 @@
 
 ```powershell
 # npm（推荐）
-dsh plugin --profile <你的profile> add dsh-coopanion-pet@1.9.0
+dsh plugin --profile <你的profile> add dsh-coopanion-pet@1.9.1
 
 # 或本地 tgz
-dsh plugin --profile <你的profile> add "file:D:\path\dsh-coopanion-pet-1.9.0.tgz"
+dsh plugin --profile <你的profile> add "file:D:\path\dsh-coopanion-pet-1.9.1.tgz"
 ```
 
 装完**必须完全退出 DSH 再重开**（客户端模块要重新装配）。
@@ -201,5 +202,5 @@ DSH 宿主进程
 | `docs/standalone-electron-plan.md` | 动手前的评估（含三家参照的对比） |
 | `docs/standalone-reevaluation.md` | 早期评估（结论已被取代，保留为记录） |
 | `docs/standalone-research.md` | 最初的调研（顶部有 ⚠️ 更正标注） |
-| `README.md` | 独立窗口一节（能力表 + 架构图） |
-| `docs/code-review.md` | v1.8.1 的代码审查记录 |
+| `README.md` | 独立窗口一节（能力表 + 架构图）+「她自己能改什么」 |
+| `docs/code-review.md` | v1.8.1 的代码审查记录（其中的 D14 已在 v1.9.1 修掉） |

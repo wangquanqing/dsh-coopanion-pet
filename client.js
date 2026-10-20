@@ -77,14 +77,6 @@ window.__ModuleLoader__.load({
     /** 三档快捷方式对应的 scale 倍率。 */
     const SIZE_SCALES = [0.30 / 0.38, 1, 0.48 / 0.38];
 
-    /**
-     * 66：`selfAdjust: 'default'` 时，哪些项她可以**直接**改（其余要先问）。
-     *
-     * 与上游 `SELF_DEFAULT` 一致：外观与习惯可直接改；
-     * 影响用户的屏幕、耳朵与称呼的，要先问。
-     */
-    const DEFAULT_SELF_DIRECT = ['scheme', 'roam', 'snoreSeconds', 'figure'];
-
     /** 62：悬停按钮条上可以放哪些动作（与 ui.js 的 BUTTONS 对应）。 */
     const HOVER_IDS = ['say', 'face', 'act', 'walk', 'dress', 'sleep'];
 
@@ -314,6 +306,16 @@ window.__ModuleLoader__.load({
       ]);
 
       /**
+       * 66：她能自己改什么（上游 `selfAdjust` 的四级模式 + 两级权限）。
+       *
+       * 判定抽在 `assets/self-adjust.js` 里——它是纯逻辑，能脱离浏览器单独跑，
+       * 而这段逻辑决定「她能不能不问你就改」，最不能出错。
+       */
+      const {
+        selfAdjustMode, planSelfPatch, pickPatch, alwaysPatch, readConsent, LABEL_KEY: SELF_LABEL_KEY,
+      } = await import(`${ABS}self-adjust.js`);
+
+      /**
        * 气泡、按钮条、状态与装扮面板的样式随桌宠一起挂载、一起卸载，
        * 避免污染宿主的样式表。
        *
@@ -467,22 +469,48 @@ window.__ModuleLoader__.load({
       /** 最近问出去的那个问题，回答回传时一并发回去，好在会话里说清是在答什么。 */
       let lastQuestion = '';
       /**
-       * 正在等回答的 CUA 权限确认。
+       * 正在等回答的**工具侧确认**（CUA 权限、她改设置的许可）。
        *
        * 与普通提问的区别：确认的回答**不送回会话**（那是插件之间的问答，
        * 不是用户给模型的话），只回给正在等的那个工具调用。
-       */
-      /**
-       * CUA 权限确认的等待槽。**带代次**：宿主侧超时后这里也要清掉，
-       * 否则用户回答别的提问会被误当成确认答案（见 confirm 分支的说明）。
+       *
+       * **带代次**：宿主侧超时后这里也要清掉，否则用户回答别的提问会被
+       * 误当成确认答案（实测确认过的 bug）。
        */
       let pendingConfirm = null;
       /** 确认的代次，每开一次加一。 */
       let confirmEpoch = 0;
-      /** 本地清理定时器。 */
-      let confirmTimer = null;
       /** 与宿主侧一致的确认超时。 */
       const CONFIRM_TIMEOUT_MS = 120000;
+
+      /**
+       * 用一个气泡问一句，等用户点选项或直接打字。
+       *
+       * @returns `{ index, text, label }`（超时、Esc、界面不在时返回 `null`）。
+       *
+       * **超时必须 resolve**：v1.9.0 的 `confirm` 分支只在定时器里清掉等待槽
+       * 却不 resolve，于是那条 `await` 永远挂着——而命令是**串行**执行的
+       * （见 `commandQueue`），一条卡住的命令会把之后的所有命令一起卡死
+       * （v1.9.1 修）。四个出口（答完、超时、Esc、纯净模式不弹气泡）都会 settle。
+       */
+      const askChoice = (question, options) => new Promise((resolve) => {
+        /**
+         * **纯净模式（OBS/录屏）里气泡不弹**：bubble.ask 会直接返回，
+         * 那样这里只能干等到超时。干脆当场按「没答」收尾——调用方 fail-closed，
+         * 用户也不会莫名其妙卡两分钟。
+         */
+        if (CLEAN) { resolve(null); return; }
+        const epoch = ++confirmEpoch;
+        // 定时器跟着代次走：后开的那次不该被上一次的清理误杀
+        const timer = setTimeout(() => settle(null), CONFIRM_TIMEOUT_MS);
+        function settle(value) {
+          clearTimeout(timer);
+          if (pendingConfirm?.epoch === epoch) pendingConfirm = null;
+          resolve(value);
+        }
+        bubble.ask(question, options, { own: false });
+        pendingConfirm = { epoch, resolve: settle };
+      });
 
       // 34：纯净模式下气泡也不显示——由 deps 里的钩子拦住所有显示路径
       const bubble = createBubble({ bubble: bubbleEl }, {
@@ -492,14 +520,30 @@ window.__ModuleLoader__.load({
         onTalk: () => body.talk(),
         onAct: (actions) => { for (const a of actions) body.do(a); },
         onAnswer: (a) => {
-          // 放弃（Esc）不算回答，不回传。
-          if (!a || a.dismissed) return;
-          // CUA 权限确认：只回给**还在等**的那个工具调用，不送回会话
+          /**
+           * 放弃（Esc）不算回答，不回传会话。
+           *
+           * 但**等着的那个工具调用要收尾**：不然它会一直挂到 120 秒超时，
+           * 而命令是串行执行的——期间后面的每条命令都排在它后面（v1.9.1 修）。
+           * 这里按「没有答案」resolve，调用方照 fail-closed 处理。
+           */
+          if (!a || a.dismissed) {
+            if (pendingConfirm) {
+              const { resolve } = pendingConfirm;
+              pendingConfirm = null;
+              resolve(null);
+            }
+            return;
+          }
+          // 工具侧确认（CUA 权限、她改设置的许可）：只回给**还在等**的那个，不送回会话
           if (pendingConfirm) {
-            const yes = a.index === 0 || String(a.text ?? a.label ?? '').trim() === '可以';
             const { resolve } = pendingConfirm;
             pendingConfirm = null;   // 答完就清，避免同一槽被复用
-            resolve(yes ? 'yes' : 'no');
+            resolve({
+              index: Number.isInteger(a.index) ? a.index : -1,
+              text: a.text !== undefined ? String(a.text) : '',
+              label: String(a.label ?? ''),
+            });
             return;
           }
           const text = a.text !== undefined ? String(a.text) : String(a.label ?? '');
@@ -682,33 +726,6 @@ window.__ModuleLoader__.load({
         t,
       });
       root.appendChild(lines.root);
-
-      /**
-       * 66：她自己能改什么（上游的 `selfAdjust` 四级）。
-       *
-       * - `off`：什么都不许她自己改
-       * - `default`：上游默认分级——外观与习惯（scheme/roam/snoreSeconds/figure）
-       *   可直接改；影响你的屏幕、耳朵与称呼的（sound/scale/bubbleSize/fontSize/
-       *   theme/hoverButtons/user）要先问
-       * - `any`：都可以直接改
-       * - `custom`：按 `selfAdjustCustom` 逐项定
-       *
-       * @returns `'self'`（可直接改）或 `'ask'`（要先问）
-       */
-      const selfTierOf = (key) => {
-        const mode = ['off', 'default', 'any', 'custom'].includes(prefs.selfAdjust)
-          ? prefs.selfAdjust
-          : 'default';
-        if (mode === 'off') return 'ask';
-        if (mode === 'any') return 'self';
-        const custom = prefs.selfAdjustCustom ?? {};
-        if (mode === 'custom') {
-          const v = custom[key];
-          return typeof v === 'boolean' ? (v ? 'self' : 'ask') : 'ask';
-        }
-        // default：外观与习惯可直接改，其余要先问
-        return DEFAULT_SELF_DIRECT.includes(key) ? 'self' : 'ask';
-      };
 
       /**
        * 把 59/60/61/35 四项写进 CSS 变量与 data 属性。
@@ -1235,34 +1252,24 @@ window.__ModuleLoader__.load({
             return { ok: true };
           }
           case 'confirm': {
-            // CUA 权限确认：用气泡问一句，两个选项。
-            // 这里**不落盘、不改偏好**，只是一次性的问答。
-            const question = String(args?.question ?? '').slice(0, 200);
-            const choices = Array.isArray(args?.choices) ? args.choices.map(String).slice(0, 2) : [];
-            if (!question || choices.length < 2) return { ok: false, reason: 'bad-confirm' };
             /**
-             * **本地也要超时清理**：宿主侧的工具调用有自己的超时
-             * （120s，见 index.js 的 CONFIRM_TIMEOUT_MS），到点它会按
-             * 「不许」处理。但页面里这个 resolver 若一直挂着，用户之后
-             * 回答**别的普通提问**时，onAnswer 会先把答案喂进这个已经没人
-             * 等的 resolver，真正的回答被丢掉（实测确认过的 bug）。
+             * 工具侧确认：CUA 权限（两个选项），或她改设置前的许可（三个选项：
+             * 可以 / 以后都行 / 不用了）。这里**不落盘、不改偏好**，
+             * 只是一次性的问答；改偏好由调用方按答案自己决定。
              *
-             * 因此这里：给每个确认一个**代次**，超时或答完都把 pendingConfirm
-             * 清掉；onAnswer 只认代次仍然匹配的那一个。
+             * 宿主侧的工具调用有自己的超时（120s，见 `CONFIRM_TIMEOUT_MS`），
+             * 页面这边用同一个时长兜底——两个出口都会 settle，见 askChoice。
              */
-            const epoch = ++confirmEpoch;
-            const choice = await new Promise((resolve) => {
-              // 用提问气泡：用户点选项或按 1/2。她不在气泡上答就等工具侧超时。
-              bubble.ask(question, choices, { own: false });
-              pendingConfirm = { epoch, resolve };
-              confirmTimer = setTimeout(() => {
-                if (pendingConfirm?.epoch === epoch) pendingConfirm = null;
-              }, CONFIRM_TIMEOUT_MS);
-            });
-            clearTimeout(confirmTimer);
-            confirmTimer = null;
-            if (pendingConfirm?.epoch === epoch) pendingConfirm = null;
-            return { ok: true, choice };
+            const question = String(args?.question ?? '').slice(0, 200);
+            const choices = Array.isArray(args?.choices) ? args.choices.map(String).slice(0, 3) : [];
+            if (!question || choices.length < 2) return { ok: false, reason: 'bad-confirm' };
+            const answer = await askChoice(question, choices);
+            // 没答（超时 / Esc / 纯净模式不弹气泡）时如实说，别谎报一个答案
+            if (!answer) return { ok: true, choice: 'timeout', index: -1 };
+            // 第一个选项是「可以」，最后一个是拒绝；中间那个（若有）是「以后都行」
+            const index = answer.index;
+            const choice = index === 0 ? 'yes' : (choices.length >= 3 && index === 1 ? 'always' : 'no');
+            return { ok: true, choice, index, text: answer.text };
           }
           case 'quiet': {
             // 安静：关音效、不走动、状态气泡让位。临时状态，不改用户偏好。
@@ -1368,24 +1375,77 @@ window.__ModuleLoader__.load({
             return { ok: true, bytes: audio.byteLength };
           }
           case 'set': {
-            const patch = args?.patch ?? {};
+            const incoming = args?.patch ?? {};
             const applied = {};
             /**
-             * 66：先过安全边界。`ask` 层的项要先问用户，答「可以」才改。
+             * 66：安全边界。上游把它分成两拨——**她自己的外观与习惯**可以直接改，
+             * **碰到你的屏幕、耳朵与称呼的**要先用气泡问一句。
              *
-             * `confirmed` 由工具侧传（它已经在气泡里问过了）；页面这边自己问
-             * 会与工具侧重复。因此这里只在**没确认**时拦下并回报需要确认。
+             * v1.9.0 这里是坏的：它把 7 个 ask 类键**无条件**列进判据（不看这次
+             * 到底改不改它们），于是默认档下**任何** `pet_set` 都被整条拒绝，
+             * 而所谓「工具侧已确认」的 `confirmed` 从来没有任何调用方传过。
+             * 现在改为：只看**这次的 patch 里真正出现的键**（`planSelfPatch`），
+             * 并且在页面里**真的问**——问的样子与上游一致（可以 / 以后都行 / 不用了）。
              */
-            const needsAsk = (key) => selfTierOf(key) === 'ask' && patch.confirmed !== true;
-            if (needsAsk('scale') || needsAsk('sound') || needsAsk('theme')
-              || needsAsk('bubbleSize') || needsAsk('fontSize') || needsAsk('hoverButtons')
-              || needsAsk('user')) {
+            const mode = selfAdjustMode(prefs.selfAdjust);
+            const plan = planSelfPatch(incoming, prefs);
+            // `off`：她什么都不许自己改，连问都不问（上游同义）
+            if (mode === 'off' && plan.ask.length) {
               return {
                 ok: false,
-                reason: 'needs-approval',
-                message: '这几项会影响用户的屏幕、耳朵或称呼，要先问过他才能改。',
+                reason: 'self-adjust-off',
+                message: '她在设置里被设为「什么都不许」，所以这几项不能改。',
+                keys: plan.ask,
               };
             }
+            /** 这次真正会写下去的键：直接允许的 + 用户答应的。 */
+            let allowed = plan.allowed;
+            let refused = [];
+            if (plan.ask.length) {
+              /**
+               * 问的时候要**说清是哪几项**，否则用户不知道自己在答应什么。
+               * 文案取设置面板里的项名，逐项列出来。
+               */
+              const labels = plan.ask.map((k) => t(SELF_LABEL_KEY[k] ?? 'settings.selfAdjust'));
+              const answer = await askChoice(
+                t('self.askQuestion', { items: labels.join(t('self.askJoin')) }),
+                [t('self.askYes'), t('self.askAlways'), t('self.askNo')],
+              );
+              /**
+               * 三种「没答应」要分清——超时/Esc/纯净模式不是「用户拒绝了」，
+               * 工具侧要能分别说清（一个可重试，一个别重试）。判定在
+               * `readConsent` 里，那是纯逻辑，单独测过。
+               */
+              const verdict = readConsent(answer, {
+                yes: t('self.askYes'), always: t('self.askAlways'), no: t('self.askNo'),
+              });
+              if (verdict === 'no-answer') {
+                return {
+                  ok: false,
+                  reason: 'no-answer',
+                  message: '她没有答（气泡超时、被关掉，或页面正处在纯净模式），所以这几项没有改。',
+                  keys: plan.ask,
+                };
+              }
+              if (verdict === 'yes' || verdict === 'always') {
+                allowed = [...allowed, ...plan.ask];
+                /**
+                 * 「以后都行」→ 切成 custom，并把这次问过的项记成可直接改
+                 * （上游 `setAlways` 同义）。这是**她自己的偏好**，
+                 * 因此与其他偏好一样走 `writePrefs`。
+                 */
+                if (verdict === 'always') {
+                  const next = alwaysPatch(prefs, plan.ask);
+                  prefs.selfAdjust = next.selfAdjust;
+                  prefs.selfAdjustCustom = next.selfAdjustCustom;
+                  writePrefs({ selfAdjust: next.selfAdjust, selfAdjustCustom: next.selfAdjustCustom });
+                }
+              } else {
+                refused = plan.ask;
+              }
+            }
+            // 下面所有分支只看 `patch`：被拒绝的键根本没进来说明它们不会被写下去
+            const patch = pickPatch(incoming, [...allowed, ...plan.exempt]);
             if (typeof patch.sizeIndex === 'number') {
               /**
                * **夹到合法档位**：越界（如 7）会让 `SIZE_SCALES[7]` 落到
@@ -1506,7 +1566,24 @@ window.__ModuleLoader__.load({
               applied.selfAdjustCustom = prefs.selfAdjustCustom;
             }
             if (Object.keys(applied).length) writePrefs(applied);
-            return { ok: true, applied };
+            /**
+             * 如实回报：改成了什么、哪些被用户拒绝。
+             *
+             * **一项都没改成**时按失败回报（与 v1.9.0 的假成功相反）——
+             * 模型据此知道该换个说法，而不是以为设置已经变了。
+             */
+            if (!Object.keys(applied).length) {
+              return {
+                ok: false,
+                reason: refused.length ? 'declined' : 'nothing-applied',
+                applied,
+                refused,
+                message: refused.length
+                  ? '用户没有同意这几项，什么都没有改。'
+                  : '这几项既没有可以改的，也没有用户同意过的，什么都没有改。',
+              };
+            }
+            return { ok: true, applied, refused };
           }
           default:
             return { ok: false, reason: 'unknown-op' };

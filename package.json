@@ -1,6 +1,6 @@
 {
   "name": "dsh-coopanion-pet",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "type": "module",
   "description": "Coopanion desktop pet for DeepSeek Harness: a whale-girl mascot that speaks, moves and can be driven by the agent",
   "keywords": [
@@ -31,6 +31,8 @@
     "icon.svg",
     "README.md",
     "ROADMAP.md",
+    "FEATURES.md",
+    "docs",
     "LICENSE"
   ],
   "dsh": {
@@ -48,7 +50,7 @@
       "dshReleases": {
         "0.2.0-rc.2": "compatible"
       },
-      "note": "在 dsh 0.2.0-rc.2（web profile 与桌面端内嵌运行时）上完成安装、加载与端到端验收：桌宠渲染、拖拽、界面穿透、气泡、装扮、13 个 pet_* 工具闭环、设置面板、提示词注入、11 门语言、走路足迹、帧率三档、全局说话热键、对话栈、形象包沙箱与导入；**独立窗口（Electron 运行时）：真透明/鼠标穿透/置顶/跨屏、全局快捷键、右键菜单、托盘、独立聊天面板（与 DSH 主面板同批会话）**；语音识别与合成、CUA 审批按可选接缝接入（未装对应插件时安全跳过），控制台零错误。"
+      "note": "在 dsh 0.2.0-rc.2（web profile 与桌面端内嵌运行时）上完成安装、加载与端到端验收：桌宠渲染、拖拽、界面穿透、气泡、装扮、13 个 pet_* 工具闭环、设置面板、提示词注入、11 门语言、走路足迹、帧率三档、全局说话热键、对话栈、形象包沙箱与导入；**独立窗口（Electron 运行时）：真透明/鼠标穿透/置顶/跨屏、全局快捷键、右键菜单、托盘、独立聊天面板（与 DSH 主面板同批会话）**；**她自己能改什么（selfAdjust 四级）：ask 层的项先用气泡问人（可以 / 以后都行 / 不用了），拒绝与超时分开回报**；语音识别与合成、CUA 审批按可选接缝接入（未装对应插件时安全跳过），控制台零错误。"
     }
   },
   "meta": {
@@ -57,6 +59,10 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:e2e": "node test/e2e/run.mjs"
   },
   "repository": {
     "type": "git",

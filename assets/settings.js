@@ -13,6 +13,7 @@
  */
 
 import { t, LANGS } from './i18n.js';
+import { directMap } from './self-adjust.js';
 
 /** 语言选项：自动 + 各语言的自身名（语言名不跟着界面语言变）。 */
 const LANG_NAMES = { zh: '中文', en: 'English', de: 'Deutsch', 'es-419': 'Español (LatAm)',
@@ -30,6 +31,30 @@ const cuaLabels = () => CUA_LEVELS.map((lv) => t(`cua.${lv}`));
 const THEMES = ['auto', 'light', 'dark'];
 /** 66：她自己能改什么（上游 selfAdjust 四级）。 */
 const SELF_MODES = ['off', 'default', 'any', 'custom'];
+/**
+ * 66：`custom` 档下逐项开关的**顺序与文案键**。
+ *
+ * 与 `assets/self-adjust.js` 的 `SELF_KEYS` 一一对应；顺序按「她自己的」
+ * 排前面、「碰到你的」排后面，与人理解这件事的方式一致。
+ */
+const SELF_ITEMS = [
+  ['figure', 'settings.figure'],
+  ['scheme', 'dress.scheme'],
+  ['roam', 'settings.roam'],
+  ['snoreSeconds', 'settings.snoreSeconds'],
+  ['statusBubble', 'settings.statusBubble'],
+  ['trail', 'settings.trail'],
+  ['fps', 'settings.fps'],
+  ['sound', 'settings.sound'],
+  ['sounds', 'settings.sounds'],
+  ['scale', 'settings.scale'],
+  ['bubbleSize', 'settings.bubbleSize'],
+  ['fontSize', 'settings.fontSize'],
+  ['theme', 'settings.theme'],
+  ['glow', 'settings.glow'],
+  ['hoverButtons', 'settings.hoverButtons'],
+  ['user', 'settings.user'],
+];
 /** 57：六类声音。 */
 const SOUND_KINDS = ['move', 'touch', 'face', 'snore', 'talk', 'ui'];
 /** 62：悬停按钮可选的动作（与 ui.js 的 BUTTONS 对应）。 */
@@ -615,7 +640,13 @@ export function createSettingsSection(React, prefs) {
     ]);
 
     /** 一行多选（62 悬停按钮、57 声音分类）。 */
-    const checks = (label, hint, ids, currentIds, onToggle) => h('div', {
+    /**
+     * 一排可以多选的小按钮。
+     *
+     * `labelOf` 决定每个按钮叫什么：默认按悬停按钮的老规矩取 `hover.<id>`，
+     * 66 的逐项开关传自己的映射（它的 id 是设置项名，不是按钮名）。
+     */
+    const checks = (label, hint, ids, currentIds, onToggle, labelOf = (id) => t(`hover.${id}`)) => h('div', {
       key: label, style: { ...ROW, flexWrap: 'wrap' },
     }, [
       h('span', { key: 'l', style: { display: 'flex', flexDirection: 'column', gap: '2px', flex: '1 1 140px' } }, [
@@ -640,13 +671,25 @@ export function createSettingsSection(React, prefs) {
               padding: '4px 10px',
             },
             onClick: (event) => { event.preventDefault(); event.stopPropagation(); onToggle(id, on); },
-          }, t(`hover.${id}`));
+          }, labelOf(id));
         })),
     ]);
 
     const sounds = current.sounds ?? {};
     const hover = Array.isArray(current.hoverButtons) ? current.hoverButtons : HOVER_IDS;
     const wake = Array.isArray(current.wakeKinds) ? current.wakeKinds : ['poke'];
+    /**
+     * 66：当前档位下「哪些项她可以直接改」，给 `custom` 的逐项开关用。
+     *
+     * 直接调判定函数而不是自己再写一遍规则——档位与勾选是同一件事的两种说法，
+     * 两处各写一份必然漂移（v1.9.0 那个缺陷就是这么来的）。
+     * `custom` 档下没勾过的项按默认表算（与 `directMap` 一致）。
+     */
+    const selfDirectMap = directMap({
+      selfAdjust: current.selfAdjust,
+      selfAdjustCustom: current.selfAdjustCustom,
+    });
+    const selfDirect = SELF_ITEMS.filter(([k]) => selfDirectMap[k] === true).map(([k]) => k);
 
     return h('div', {
       style: { display: 'flex', flexDirection: 'column', width: '100%', fontSize: '13.5px' },
@@ -698,6 +741,17 @@ export function createSettingsSection(React, prefs) {
       // ---- 她自己能改什么（66） ----
       choice('selfAdjust', t('settings.selfAdjust'), SELF_MODES.map((m) => t(`self.${m}`)), SELF_MODES,
         t('settings.selfAdjustHint')),
+      /**
+       * 只有 `custom` 档需要逐项勾——其余三档下这张表没有意义，
+       * 常驻反而让人以为那几档也看这些勾。
+       */
+      current.selfAdjust === 'custom'
+        ? checks(t('settings.selfAdjustItems'), t('settings.selfAdjustItemsHint'),
+            SELF_ITEMS.map(([k]) => k),
+            selfDirect,
+            (id, on) => set({ selfAdjustCustom: { ...(current.selfAdjustCustom ?? {}), [id]: !on } }),
+            (id) => t(SELF_ITEMS.find(([k]) => k === id)?.[1] ?? 'settings.selfAdjust'))
+        : null,
 
       // ---- 电脑操作审批 ----
       choice('cuaLevel', t('settings.cua'), cuaLabels(), CUA_LEVELS, t('settings.cuaHint')),

@@ -1,4 +1,4 @@
-# 功能对照清单：上游 Coopanion vs dsh-coopanion-pet v1.9.0
+# 功能对照清单：上游 Coopanion vs dsh-coopanion-pet v1.9.1
 
 > 对照基准：**本机安装版** `cortico-world-desktop-pet@0.2.0`
 > （`D:\wangq\Documents\Coopanion\resources\app\node_modules\cortico-world-desktop-pet`，
@@ -6,7 +6,7 @@
 > **为什么用它而不是 GitHub**：那是你实际在运行的版本，比仓库更贴近真实；
 > 其 `src/` 行数与本文档此前记载的完全一致（`chat.ts` 207、`packs.ts` 329 等），说明基准可信。
 >
-> 与 `dsh-coopanion-pet` **v1.9.0**。
+> 与 `dsh-coopanion-pet` **v1.9.1**。
 >
 > **本文档在 2026-10-18 的代码审查中重写过**：此前基准停在 v1.4.0，
 > 把 v1.5–v1.8 已经做完的项仍列为「未做」。逐项核查与修复记录见
@@ -57,25 +57,26 @@
 
 ---
 
-## 二、未移植（37 项，按「为什么没搬」分组）
+## 二、原「未移植」37 项（现已做完 32 项，剩 5 项「跳过」）
 
-> **2026-10-18 审查后的状态**：原 37 项里，**v1.5–v1.8 已经做完 22 项**，
-> 真正未做的只剩 **9 项**（含 4 项「跳过」）。下面用 **✅ 已完成** 标出已做的，
-> 并给出批次。
+> **2026-10-20 的状态**：原 37 项里，**v1.5–v1.8 做完 22 项**，**v1.9.0 再做完 4 项**
+> （31/32/33/39，由独立窗口提供），**v1.9.1 做完 66**（`selfAdjust` 的 `ask` 层）。
+> 真正未做的只剩 **5 项**，全部是「跳过」：36 / 38 / 45 / 51 / 54。
+> 下面用 **✅ 已完成** 标出已做的，并给出批次。
 
 ### A. 拿不到宿主能力（浏览器够不着）
 
 | # | 上游功能 | 上游位置 | 状态 |
 | --- | --- | --- | --- |
-| 31 | 透明置顶窗口 | `host/electron-main.cjs`（511 行） | ❌ 未做（用户选择**搁置**）——Web 页面没有窗口概念；转 `docs/standalone-research.md` |
-| 32 | 鼠标穿透租约 | `host/mouse-lease.cjs` | ❌ 未做（**搁置**）——同上 |
-| 33 | 托盘、跨屏跟随 | `host/electron-main.cjs` | ❌ 未做（**搁置**）——同上 |
+| 31 | 透明置顶窗口 | `host/electron-main.cjs`（511 行） | ✅ **已完成（v1.9.0）**——独立窗口：`transparent: true` + `setAlwaysOnTop(true,'floating')` |
+| 32 | 鼠标穿透租约 | `host/mouse-lease.cjs` | ✅ **已完成（v1.9.0）**——`setIgnoreMouseEvents(true,{forward:true})` + 命中判定，窗口级穿透 |
+| 33 | 托盘、跨屏跟随 | `host/electron-main.cjs` | ✅ **已完成（v1.9.0）**——Tray + `setVisibleOnAllWorkspaces`（**跨屏移动**仍未做，窗口开在主屏） |
 | 34 | OBS 叠加导出 | `web/overlay.js` + `host/overlay.cjs` | ✅ **已完成（v1.5）**——做成纯净模式（`#cpn-clean`，只留本体，便于录屏） |
 | 35 | 屏幕采样光晕 | `pet-app.js` probeBackdrop + GDI 采样 | ✅ **已完成（v1.5）**——CSS 近似（上游是采样屏幕取色，这是简化） |
 | 36 | 全屏时自动隐藏 | `window.hideWhenFullscreen` | ❌ 未做（用户选择**跳过**）——需要窗口枚举 |
 | 37 | CUA 引擎与 12 个 `pet_cua_*` 工具 | `src/cua/engine-child.ts` + `engine/` + `cua/tools.ts` | ✅ **已换实现（v1.4）**——接 dsh-computer-use-win 的 `mcp__wincu__*` 工具 |
 | 38 | CUA 让位空闲检测 | `userIdleMs` / `maxYieldWaitMs` | ❌ 未做（用户选择**跳过**）——依赖原生 `GetLastInputInfo` |
-| 39 | 真正的全局说话热键 | `src/asr/hotkey.ts`（koffi 轮询） | ✅ **已换实现（v1.4）**——走 DSH `shortcuts` 服务（**页内有效**，这是有意取舍） |
+| 39 | 真正的全局说话热键 | `src/asr/hotkey.ts`（koffi 轮询） | ✅ **两条路都有**：页内走 DSH `shortcuts`（v1.4）；**真全局热键**由独立窗口的 `globalShortcut` 提供（v1.9.0，默认 `Alt+Space` 唤出/收起） |
 
 ### B. 刻意不搬（DSH 已有 / 重复造没意义）
 
@@ -112,7 +113,7 @@
 | 63 | 双击打开输入框 | false | ✅ **已完成（v1.5）** |
 | 64 | 触摸唤醒 `touch.wakeOn` | `poke` | ✅ **已完成（v1.5）**——四档（poke/all/none/custom）与 `wakeKinds` |
 | 65 | 体型连续调节 `scale` | 1（0.5–10） | ⚠️ **简化（v1.5）**——做成三档（小/中/大），**不是连续值**；见 `docs/code-review.md` 的 D1 |
-| 66 | `selfAdjust` 四级「她自己能改什么」 | `default` | ⚠️ **未做（审查后确认该补）**——本插件 `pet_set` **一律直接改**，缺上游的 `ask` 层（「碰到用户屏幕/耳朵/称呼要先问」）。见 `docs/code-review.md` 的 D14 |
+| 66 | `selfAdjust` 四级「她自己能改什么」 | `default` | ✅ **已完成（v1.9.1）**——四级模式 + 两级权限；`ask` 层的项用气泡问人（可以 / 以后都行 / 不用了），拒绝与超时分开回报。判定抽在 `assets/self-adjust.js`，25 条单测钉住。见 `docs/code-review.md` 的 D14（已修） |
 | 67 | i18n 其余 9 门语言 | 11 门 | ✅ **已完成（v1.5 + v1.8 补齐）**——11 门 × **154 键**完整（审查中发现 v1.6–v1.8 新增的 26 键只加进了中英，**已补齐**） |
 
 ---
@@ -327,20 +328,23 @@ dsh plugin --profile <你的profile> add dsh-coopanion-pet
 
 ---
 
-## 五、一句话总结（2026-10-18 审查后）
+## 五、一句话总结（2026-10-20 更新）
 
 - **上游 80 项功能点**（对照本机安装版 `cortico-world-desktop-pet@0.2.0`）：
-  - **已移植/已换实现 52 项**（原 30 项 + 审查中确认 v1.5–v1.8 又做完 22 项）
+  - **已移植/已换实现 57 项**（原 30 + 审查确认 v1.5–v1.8 的 22 + **v1.9.0 的 4**（31/32/33/39）
+    + **v1.9.1 的 1**（66））
     - 其中 **7 个文件逐字节相同**：`kit/rig.js`、`kit/body.js`、`whale/figure.js`、
       `whale/model.json`、`coo/coo.js`、`coo/figure.js`、`coo/figure.json`
       （实测 `diff` 核对，见 `docs/code-review.md` 第二节）
     - `mic-worklet.js` **代码逐行相同**，只把注释换成了中文
-  - **真正未做 9 项**：31/32/33/39（搁置为独立壳调研）、36/38/45/51（跳过）、
-    54（实测后决定不做）、66（`selfAdjust` 的 ask 层，**审查确认该补**）
+  - **真正未做 5 项**：36 / 38 / 45 / 51 / 54，全部是用户明确「跳过」的
   - **本插件新增 13 项**（68–80，含上游**完全没有**的 TTS 整条链路）
 - **审查中发现的缺陷**：6 高危 + 16 中危 + 10 低危，**已修 6 高 + 11 中 + 3 低**；
-  未修的 5 条都写明了理由（见 `docs/code-review.md` 第七节）
+  未修的 5 条都写明了理由（见 `docs/code-review.md` 第七节）。
+  **v1.9.1 又修掉清单里排第一的 D14**（`selfAdjust` 的两级权限），并连带修掉一条
+  会让命令队列卡死的超时缺陷（见 `docs/standalone-implementation.md` 第七节）
 - **文档与代码不一致 5 处**，全部修正（含本文档自身、`package.json`、`ROADMAP.md`、
   `mic-worklet.js` 注释、i18n 九门语言）
 - **一句话**：没搬的大件都有明确理由（DSH 已有 / 宿主能力 / 工作量不划算），
-  新增的部分都围绕一个目标——让桌宠在 DSH 里**能看、能说、能听、能当审批人**。
+  新增的部分都围绕一个目标——让桌宠在 DSH 里**能看、能说、能听、能当审批人**，
+  而且**碰到你的屏幕、耳朵与称呼时先问一句**。

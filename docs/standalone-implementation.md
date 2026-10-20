@@ -143,6 +143,13 @@ v1.9.0 把独立窗口做出来了，但**发布链条上还有两个洞**，v1.
 另外两处文档/打包不一致：**README 指向 `docs/standalone-usage.md`，但 `package.json` 的 `files` 不含 `docs/`**
 （从 npm 装的人点开是 404），v1.9.1 把 `docs/` 与 `FEATURES.md` 一并打进包里。
 
+**发布结果（2026-10-20 14:42）**：`npm 1.9.1` 已发，`dist-tags.latest = 1.9.1`，
+`gitHead = 1a3ad65`（与远端 `main` 一致）；从 registry 拉的 tgz shasum `5954208…`
+与本地 `npm pack` 产物**逐字节相同**。装进临时 profile 验过：`docs/` 九个 md 齐全、
+`apply` 是函数、13 个工具造得出来、包内 `pet_set` 的三条回报与 `self-adjust` 判定都符合预期。
+
+**1.9.0 始终没在 npm 上**——它只作为代码与 tag 存在。装 1.9.x 请用 **1.9.1**。
+
 ### `pet_set` 的 ask 层：从「一律拒绝」到「真的问一句」
 
 **症状**：默认设置下，模型调 `pet_set` 改任何东西都回 `needs-approval`——包括只改漫游倾向这种

@@ -249,6 +249,7 @@ dsh plugin --profile <你的profile> add dsh-coopanion-pet
 ```
 
 指定版本：`dsh plugin --profile <你的profile> add dsh-coopanion-pet@1.9.1`
+（**npm 上没有 1.9.0**——它只作为代码与 tag 存在，请用 1.9.1。）
 
 **从 GitHub 装**（跟仓库 main 分支）：
 
@@ -413,6 +414,10 @@ npm run test:e2e  # 真浏览器（Edge headless）跑上表 5 个用例，约 4
 `test/e2e/` 里是一台**最小验证台**：它复刻宿主的四条路由（资源 / `client.js` / 预览页 / SSE）
 与 report 端点，于是 `client.js` **一个字都不用改**就能在真浏览器里收命令、点气泡。
 浏览器路径可用 `CPN_E2E_BROWSER` 覆盖。
+
+**发布件验收（2026-10-20）**：`npm 1.9.1` 发布后，从 registry 拉包装进临时 profile 验过——
+`dist-tags.latest = 1.9.1`、`gitHead = 1a3ad65`（与 `main` 一致）、tgz shasum 与本地构建**逐字节相同**、
+`docs/` 九个 md 齐全且 README 里那个链接**点得开**、`apply` 是函数、13 个工具造得出来。
 
 | 项 | 结果 |
 | --- | --- |

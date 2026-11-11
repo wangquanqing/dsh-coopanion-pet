@@ -169,6 +169,27 @@ function DesktopRow({ React: R, current, set }) {
     try {
       if (what === 'start') {
         /**
+         * **先把面板当前值推给宿主，再让它启动。**
+         *
+         * 宿主手里那份 `desktopPrefs` 只存在内存里，DSH 一重启就回到默认值
+         * （`gpu: false`、`electron: ''`），而页面只在装配时上报一次。所以直接点
+         * 「打开」很可能用一份过时的值起窗口——表现就是改过 GPU 开关、关掉再打开，
+         * 又退回软件渲染。
+         *
+         * 这一次不节流，并带上真实的 `enabled`：宿主若据此自动拉起，随后的
+         * `desktop-start` 会拿到 `already: true`，不会开出第二个窗口。
+         */
+        await fetch('/api/dsh-coopanion-pet/report', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            kind: 'desktop-prefs',
+            enabled: current.desktopEnabled !== false,
+            hotkey: String(current.desktopHotkey ?? 'Alt+Space'),
+            electron: String(current.desktopElectron ?? ''),
+            gpu: current.desktopGpu === true,
+          }),
+        }).catch(() => { /* 推不上去就只能用宿主手里那份 */ });
+        /**
          * **必须读返回值。** 宿主失败时回的是 200 + `{ ok:false, reason:'no-electron' }`，
          * 不看 body 的话界面只会从「检查中」退回「未运行」，用户拿不到任何线索。
          */

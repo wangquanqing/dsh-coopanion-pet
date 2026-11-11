@@ -92,6 +92,10 @@ export function createLines(deps) {
     /**
      * 选边：优先她**背对**的那侧（不挡她看的方向），没位置就换另一侧，
      * 两侧都不行就移到她头顶上方。
+     *
+     * `widest` 只用来**判断**哪一侧放得下（要按最宽那条算保守值），
+     * **不参与每条的实际 x**——再减一次宽度，窄的那几条会被推到离她很远的地方。
+     * 右侧没这个毛病，因为那边只加 `beside`、不减宽度。
      */
     const side = -(at.facing ?? 1);
     const beside = 14;
@@ -109,7 +113,7 @@ export function createLines(deps) {
       const w = widths[i], h = heights[i];
       const x = above
         ? Math.max(8, Math.min(at.x - w / 2, window.innerWidth - w - 8))
-        : Math.max(8, Math.min(use < 0 ? inner(use) - w : inner(use), window.innerWidth - w - 8));
+        : Math.max(8, Math.min(use < 0 ? at.x - beside - w : at.x + beside, window.innerWidth - w - 8));
       const y = Math.max(8, bottom - h);
       it.targetX = x;
       it.targetY = y;

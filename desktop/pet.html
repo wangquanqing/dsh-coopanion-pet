@@ -47,13 +47,44 @@ function showErr(text) {
  *
  * 判据与插件主路径一致：用渲染内核回报的命中圆，加上她自己的界面元素。
  */
+/** 她自己那些「能接点击」的界面块。 */
+const UI_SELECTORS = ['.cpn-tools', '.cpn-bubble', '.cpn-menu', '.cpn-dress', '.cpn-status'];
+
+/**
+ * 元素真的画在屏幕上吗？
+ *
+ * **不能用 `:not([hidden])` 判断。** 这些块大多靠 `display`/`opacity` 收起，
+ * `hidden` 属性从头到尾没被设过，于是「看不见的浮层」也被算作可见——
+ * 判据恒为真，「在她身上」就永远成立。
+ */
+function isShown(el) {
+  if (!el) return false;
+  const rect = el.getBoundingClientRect();
+  if (rect.width < 1 || rect.height < 1) return false;
+  const style = getComputedStyle(el);
+  return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) > 0.01;
+}
+
+/** 光标是否**落在**某块界面元素的矩形里（而不是它存在就算）。 */
+function pointerOverUi(x, y) {
+  for (const selector of UI_SELECTORS) {
+    const list = document.querySelectorAll(selector);
+    for (const el of list) {
+      if (!isShown(el)) continue;
+      const r = el.getBoundingClientRect();
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return true;
+    }
+  }
+  return false;
+}
+
 let lastOn = null;
 function reportInteractive() {
   const api = window.__dshCoopanionPet;
   if (!api) return;
-  // 她的命中圆（内核回报）+ 悬停时出现的按钮条与气泡
-  const overUi = document.querySelector('.cpn-tools:not([hidden]), .cpn-bubble:not([hidden]), .cpn-menu:not([hidden]), .cpn-dress:not([hidden]), .cpn-status:not([hidden])');
-  const on = !!(window.__dshPetPointerOn || overUi);
+  // 她的命中圆（内核回报）+ 光标真的压在某块界面上
+  const p = window.__dshPetPointer || { x: -1, y: -1 };
+  const on = !!(window.__dshPetPointerOn || pointerOverUi(p.x, p.y));
   if (on === lastOn) return;
   lastOn = on;
   try { window.dshPetDesktop?.setInteractive(on); } catch (error) { /* 桥不在就算了 */ }
@@ -97,6 +128,8 @@ document.addEventListener('mousemove', (e) => {
   const api = window.__dshCoopanionPet;
   const hits = api?.hits ?? [];
   window.__dshPetPointerOn = hits.some((c) => Math.hypot(e.clientX - c.x, e.clientY - c.y) < c.r);
+  // 坐标也存一份：浮层的命中要按矩形算，光有布尔值判断不了「压在哪个块上」
+  window.__dshPetPointer = { x: e.clientX, y: e.clientY };
 }, true);
 
 startPreview(document.getElementById('host'))

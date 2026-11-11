@@ -225,16 +225,32 @@ let alwaysIgnoreMouse = false;
 let chatWin = null;
 
 /**
+ * 把「当前该不该接点击」真正落到窗口上。**唯一一处调用 setIgnoreMouseEvents 的地方。**
+ */
+function applyIgnore() {
+  if (!win || win.isDestroyed()) return;
+  try {
+    const ignore = alwaysIgnoreMouse ? true : !interactive;
+    win.setIgnoreMouseEvents(ignore, { forward: true });
+  } catch (error) { status('setIgnoreMouseEvents 抛错: ' + String(error && error.message ? error.message : error)); }
+}
+
+/**
  * 切换「可交互」。**这就是「点空白穿透到桌面、点她能交互」的实现。**
+ *
+ * 与原来相比只剩一处不同：**不再提前 return。** 原来 `if (next === interactive) return;`
+ * 让这个变量成了唯一真相，一旦它和窗口真实状态脱钩（别的分支直接调过
+ * `setIgnoreMouseEvents`）就再也同步不回来。现在每次都重设一遍，幂等，
+ * 代价只是一次系统调用。
  */
 function setInteractive(on) {
   if (!win || win.isDestroyed()) return;
   const next = on === true;
-  if (next === interactive) return;
+  const changed = next !== interactive;
   interactive = next;
-  // 用户勾了「永远穿透」时，自动判定不再改变穿透状态
-  win.setIgnoreMouseEvents(alwaysIgnoreMouse ? true : !next, { forward: true });
-  status('interactive=' + next);
+  applyIgnore();
+  // 只在真变化时记一行——否则状态文件一天能涨到十几万行
+  if (changed) status('interactive=' + interactive);
 }
 
 async function createWindow(port) {
@@ -244,6 +260,21 @@ async function createWindow(port) {
     // 透明 + 无边框 + 置顶 + 不进任务栏：上游与 takboo 都用这套
     transparent: true, frame: false, resizable: false, movable: false,
     skipTaskbar: true, hasShadow: false, alwaysOnTop: true,
+    /**
+     * **不让她抢焦点。**
+     *
+     * 她是常驻装饰，只接鼠标、不接键盘；启动时更不该把焦点从用户正在打字的
+     * 窗口抢走（日志里 `window shown` 之后紧跟一行 `window focus` 就是它在抢）。
+     *
+     * 注：这不是「点她之后滚轮失效」的修复。那次的推断（Windows 按焦点窗口路由
+     * 滚轮）已被日志证伪——`GetForegroundWindow` 全程是 msedge，浏览器从没丢过
+     * 焦点，滚轮却照样不动。那条至今没有解释。
+     *
+     * 保留它的理由是另一件事：它确实解决了启动抢焦点。`focusable: false` 只影响
+     * 键盘焦点，鼠标事件照收（摸她、拖动、右键都正常）；需要键盘的对话面板是
+     * 另一个窗口，不受影响。
+     */
+    focusable: false,
     backgroundColor: '#00000000', show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -256,10 +287,15 @@ async function createWindow(port) {
   win.setAlwaysOnTop(true, 'floating');
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   // 初始不接点击：鼠标穿透到桌面（但页面仍收 mousemove）
-  win.setIgnoreMouseEvents(true, { forward: true });
+  applyIgnore();
 
   win.once('ready-to-show', () => {
-    win.show();
+    /**
+     * `showInactive()` 而不是 `show()`：她是常驻装饰，启动时不该把焦点从
+     * 用户正在打字的窗口抢走。日志里 `window shown` 之后紧跟的那行 `window focus`
+     * 就是它在抢——用户主动点她、或用托盘/快捷键唤出时，才需要真的聚焦。
+     */
+    win.showInactive();
     status('window shown visible=' + win.isVisible() + ' alwaysOnTop=' + win.isAlwaysOnTop()
       + ' bounds=' + JSON.stringify(win.getBounds()));
   });
@@ -309,9 +345,17 @@ function buildMenu() {
       type: 'checkbox',
       checked: false,
       click: (item) => {
-        // 勾上 = 永远穿透（她变成纯装饰）；取消 = 恢复自动判定
+        /**
+         * 勾上 = 永远穿透（她变成纯装饰）；取消 = 交回自动判定。
+         *
+         * **取消时必须先把 `interactive` 归零。** 原来写的是
+         * `setIgnoreMouseEvents(!interactive)`——这个变量只要残留着 true，
+         * 这一下就把整块 workArea 全屏窗口从「穿透」切成「全盘接手」，
+         * 屏幕上任何地方都点不动。归零之后先保持穿透，等页面下一拍重新判定。
+         */
         alwaysIgnoreMouse = item.checked;
-        if (win && !win.isDestroyed()) win.setIgnoreMouseEvents(alwaysIgnoreMouse ? true : !interactive, { forward: true });
+        if (alwaysIgnoreMouse) interactive = false;
+        applyIgnore();
         status('alwaysIgnoreMouse=' + alwaysIgnoreMouse);
       },
     },

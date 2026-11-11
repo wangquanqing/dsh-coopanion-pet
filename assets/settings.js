@@ -629,12 +629,25 @@ export function createSettingsSection(React, prefs) {
     const choice = (key, label, options, values, hint) => {
       const list = values ?? options.map((_, i) => i);
       const at = list.indexOf(current[key]);
-      return h('div', { key, style: ROW }, [
-        h('span', { key: 'l', style: { display: 'flex', flexDirection: 'column', gap: '2px' } }, [
+      return h('div', { key, style: { ...ROW, flexWrap: 'wrap' } }, [
+        /**
+         * 左列要有保底宽度。
+         *
+         * 原来没有 flex-basis（默认 `0 1 auto`），右侧按钮组一宽就把这一列压到
+         * 只剩一个字宽——中文可以逐字断行，于是「语言」两个字就这么竖排了。
+         */
+        h('span', { key: 'l', style: { display: 'flex', flexDirection: 'column', gap: '2px', flex: '1 1 140px', minWidth: 0 } }, [
           h('span', { key: 'n' }, label),
           hint ? h('span', { key: 'h', style: HINT }, hint) : null,
         ]),
-        h('span', { key: 'g', style: { display: 'flex', flex: 'none', gap: '4px', flexWrap: 'wrap', justifyContent: 'flex-end' } },
+        /**
+         * 右侧用 `1 1 auto` 而不是原来的 `none`。
+         *
+         * `none` = `0 0 auto`，宽度等于**一整行内容宽度**：既不收缩，
+         * `flexWrap` 也就没有可换行的余地，多出来的按钮直接溢出被裁掉。
+         * 给它一个可伸缩的 basis，才谈得上「自适应多行」。
+         */
+        h('span', { key: 'g', style: { display: 'flex', flex: '1 1 auto', gap: '4px', flexWrap: 'wrap', justifyContent: 'flex-end', minWidth: 0 } },
           options.map((name, i) => h('button', {
             key: name,
             type: 'button',

@@ -116,6 +116,7 @@ window.__ModuleLoader__.load({
       desktopEnabled: false,
       desktopHotkey: 'Alt+Space',
       desktopElectron: '',
+      desktopGpu: false,
       sizeIndex: 1,
       roamIndex: 0,
       sound: true,
@@ -1916,6 +1917,7 @@ window.__ModuleLoader__.load({
             enabled: prefs.desktopEnabled === true,
             hotkey: String(prefs.desktopHotkey ?? 'Alt+Space'),
             electron: String(prefs.desktopElectron ?? ''),
+            gpu: prefs.desktopGpu === true,
           }),
         }).catch(() => {});
       } catch (error) { /* 报不上去也不影响本体 */ }

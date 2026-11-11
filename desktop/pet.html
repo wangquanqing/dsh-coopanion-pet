@@ -47,13 +47,59 @@ function showErr(text) {
  *
  * 判据与插件主路径一致：用渲染内核回报的命中圆，加上她自己的界面元素。
  */
+/** 她自己那些「能接点击」的界面块。 */
+const UI_SELECTORS = ['.cpn-tools', '.cpn-bubble', '.cpn-menu', '.cpn-dress', '.cpn-status'];
+
+/**
+ * 元素真的画在屏幕上吗？
+ *
+ * **不能用 `:not([hidden])` 判断。** 这些块大多靠 `display`/`opacity` 收起，
+ * `hidden` 属性从头到尾没被设过，于是「看不见的浮层」也被算作可见——
+ * 判据恒为真，「在她身上」就永远成立。
+ */
+function isShown(el) {
+  if (!el) return false;
+  const rect = el.getBoundingClientRect();
+  if (rect.width < 1 || rect.height < 1) return false;
+  const style = getComputedStyle(el);
+  return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) > 0.01;
+}
+
+/** 光标是否**落在**某块界面元素的矩形里（而不是它存在就算）。 */
+function pointerOverUi(x, y) {
+  for (const selector of UI_SELECTORS) {
+    const list = document.querySelectorAll(selector);
+    for (const el of list) {
+      if (!isShown(el)) continue;
+      const r = el.getBoundingClientRect();
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * 按最后一次已知的光标位置，重算「在不在她身上」。
+ *
+ * `__dshPetPointerOn` 只在 `mousemove` 时更新。窗口藏起来那段时间收不到事件，
+ * 放回来时光标往往没动过——只等下一次移动，窗口会一直留在穿透状态，点她没反应。
+ */
+function recomputeHit() {
+  const api = window.__dshCoopanionPet;
+  const p = window.__dshPetPointer;
+  if (!api || !p) return;
+  const hits = api.hits ?? [];
+  window.__dshPetPointerOn = hits.some((c) => Math.hypot(p.x - c.x, p.y - c.y) < c.r);
+}
+
 let lastOn = null;
 function reportInteractive() {
   const api = window.__dshCoopanionPet;
   if (!api) return;
-  // 她的命中圆（内核回报）+ 悬停时出现的按钮条与气泡
-  const overUi = document.querySelector('.cpn-tools:not([hidden]), .cpn-bubble:not([hidden]), .cpn-menu:not([hidden]), .cpn-dress:not([hidden]), .cpn-status:not([hidden])');
-  const on = !!(window.__dshPetPointerOn || overUi);
+  // 她的命中圆（内核回报）+ 光标真的压在某块界面上
+  const p = window.__dshPetPointer || { x: -1, y: -1 };
+  const hoverUi = pointerOverUi(p.x, p.y);
+  const on = !!(window.__dshPetPointerOn || hoverUi);
   if (on === lastOn) return;
   lastOn = on;
   try { window.dshPetDesktop?.setInteractive(on); } catch (error) { /* 桥不在就算了 */ }
@@ -62,6 +108,34 @@ function reportInteractive() {
 // 每秒看几次即可（判定很轻），避免每帧都发 IPC
 setInterval(reportInteractive, 120);
 document.addEventListener('mousemove', () => { setTimeout(reportInteractive, 0); }, true);
+
+/**
+ * 窗口重新可见时先对一次：重算命中，再强制上报一拍。
+ *
+ * `lastOn` 归 null 是为了让 `reportInteractive` 一定发出去——它平时只在值变化时
+ * 发，而这里要的正是「按现在的真实状态重报一次」。
+ */
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  recomputeHit();
+  lastOn = null;
+  reportInteractive();
+});
+
+/**
+ * 主进程把窗口放回来时会戳一下这里：重算命中，再强制重报。
+ *
+ * **不靠 `visibilitychange`**：Electron 窗口从 hide 到 show，页面的 `visibilityState`
+ * 不一定翻转，这个事件在这里靠不住——藏起来时主进程已经把「可交互」归零了，
+ * 页面若还以为自己早就报过，两头就永远差一拍。
+ */
+try {
+  window.dshPetDesktop?.onRecheck?.(() => {
+    recomputeHit();
+    lastOn = null;
+    reportInteractive();
+  });
+} catch (error) { /* 桥不在就算了 */ }
 
 /**
  * 在她身上右键 → 弹独立窗口自己的菜单。
@@ -97,6 +171,8 @@ document.addEventListener('mousemove', (e) => {
   const api = window.__dshCoopanionPet;
   const hits = api?.hits ?? [];
   window.__dshPetPointerOn = hits.some((c) => Math.hypot(e.clientX - c.x, e.clientY - c.y) < c.r);
+  // 坐标也存一份：浮层的命中要按矩形算，光有布尔值判断不了「压在哪个块上」
+  window.__dshPetPointer = { x: e.clientX, y: e.clientY };
 }, true);
 
 startPreview(document.getElementById('host'))

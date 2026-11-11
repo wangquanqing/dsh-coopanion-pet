@@ -225,16 +225,32 @@ let alwaysIgnoreMouse = false;
 let chatWin = null;
 
 /**
+ * 把「当前该不该接点击」真正落到窗口上。**唯一一处调用 setIgnoreMouseEvents 的地方。**
+ */
+function applyIgnore() {
+  if (!win || win.isDestroyed()) return;
+  try {
+    const ignore = alwaysIgnoreMouse ? true : !interactive;
+    win.setIgnoreMouseEvents(ignore, { forward: true });
+  } catch (error) { status('setIgnoreMouseEvents 抛错: ' + String(error && error.message ? error.message : error)); }
+}
+
+/**
  * 切换「可交互」。**这就是「点空白穿透到桌面、点她能交互」的实现。**
+ *
+ * 与原来相比只剩一处不同：**不再提前 return。** 原来 `if (next === interactive) return;`
+ * 让这个变量成了唯一真相，一旦它和窗口真实状态脱钩（别的分支直接调过
+ * `setIgnoreMouseEvents`）就再也同步不回来。现在每次都重设一遍，幂等，
+ * 代价只是一次系统调用。
  */
 function setInteractive(on) {
   if (!win || win.isDestroyed()) return;
   const next = on === true;
-  if (next === interactive) return;
+  const changed = next !== interactive;
   interactive = next;
-  // 用户勾了「永远穿透」时，自动判定不再改变穿透状态
-  win.setIgnoreMouseEvents(alwaysIgnoreMouse ? true : !next, { forward: true });
-  status('interactive=' + next);
+  applyIgnore();
+  // 只在真变化时记一行——否则状态文件一天能涨到十几万行
+  if (changed) status('interactive=' + interactive);
 }
 
 async function createWindow(port) {
@@ -244,6 +260,21 @@ async function createWindow(port) {
     // 透明 + 无边框 + 置顶 + 不进任务栏：上游与 takboo 都用这套
     transparent: true, frame: false, resizable: false, movable: false,
     skipTaskbar: true, hasShadow: false, alwaysOnTop: true,
+    /**
+     * **不让她抢焦点。**
+     *
+     * 她是常驻装饰，只接鼠标、不接键盘；启动时更不该把焦点从用户正在打字的
+     * 窗口抢走（日志里 `window shown` 之后紧跟一行 `window focus` 就是它在抢）。
+     *
+     * 注：这不是「点她之后滚轮失效」的修复。那次的推断（Windows 按焦点窗口路由
+     * 滚轮）已被日志证伪——`GetForegroundWindow` 全程是 msedge，浏览器从没丢过
+     * 焦点，滚轮却照样不动。那条至今没有解释。
+     *
+     * 保留它的理由是另一件事：它确实解决了启动抢焦点。`focusable: false` 只影响
+     * 键盘焦点，鼠标事件照收（摸她、拖动、右键都正常）；需要键盘的对话面板是
+     * 另一个窗口，不受影响。
+     */
+    focusable: false,
     backgroundColor: '#00000000', show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -256,14 +287,46 @@ async function createWindow(port) {
   win.setAlwaysOnTop(true, 'floating');
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   // 初始不接点击：鼠标穿透到桌面（但页面仍收 mousemove）
-  win.setIgnoreMouseEvents(true, { forward: true });
+  applyIgnore();
 
   win.once('ready-to-show', () => {
-    win.show();
-    status('window shown visible=' + win.isVisible() + ' alwaysOnTop=' + win.isAlwaysOnTop()
+    /**
+     * `showInactive()` 而不是 `show()`：她是常驻装饰，启动时不该把焦点从
+     * 用户正在打字的窗口抢走。日志里 `window shown` 之后紧跟的那行 `window focus`
+     * 就是它在抢——用户主动点她、或用托盘/快捷键唤出时，才需要真的聚焦。
+     */
+    win.showInactive();
+    status('window ready visible=' + win.isVisible() + ' alwaysOnTop=' + win.isAlwaysOnTop()
       + ' bounds=' + JSON.stringify(win.getBounds()));
   });
   win.webContents.on('did-finish-load', () => status('page loaded'));
+  /**
+   * 可见性一变，就把「接不接鼠标」重新落一遍。
+   *
+   * `applyIgnore()` 平时只在页面报消息时跑。窗口藏起来那段时间页面收不到鼠标
+   * 事件，「光标在她身上」的判断就停在藏起来之前那一刻；放回来时若还照那个值走，
+   * 两边可能对不上——表现就是藏一次再叫回来，点她没反应。
+   *
+   * 藏起来时先把 `interactive` 归零：窗口都不在了，谈不上「在她身上」。
+   * 放回来从穿透起步，等页面重新报一次再决定。
+   */
+  win.on('show', () => {
+    applyIgnore();
+    /**
+     * 放回来时戳页面一下，让它重新报一次「光标在不在她身上」。
+     *
+     * 藏起来时主进程把 `interactive` 归零了，页面那边的 `lastOn` 却还停在藏起来
+     * 之前的值——放回来它算出来仍是「在她身上」，和 `lastOn` 相等就不发消息，
+     * 两边从此差一拍：主进程认为穿透，页面以为早就说过。这一戳是为了把两头对齐。
+     */
+    try { win.webContents.send('pet:recheck'); } catch (error) { /* 页面还没就绪就算了 */ }
+    status('window shown');
+  });
+  win.on('hide', () => {
+    interactive = false;
+    applyIgnore();
+    status('window hidden');
+  });
   // 窗口失焦时也保持置顶与穿透判定正确
   win.on('blur', () => status('window blur'));
   win.on('focus', () => status('window focus'));
@@ -309,9 +372,17 @@ function buildMenu() {
       type: 'checkbox',
       checked: false,
       click: (item) => {
-        // 勾上 = 永远穿透（她变成纯装饰）；取消 = 恢复自动判定
+        /**
+         * 勾上 = 永远穿透（她变成纯装饰）；取消 = 交回自动判定。
+         *
+         * **取消时必须先把 `interactive` 归零。** 原来写的是
+         * `setIgnoreMouseEvents(!interactive)`——这个变量只要残留着 true，
+         * 这一下就把整块 workArea 全屏窗口从「穿透」切成「全盘接手」，
+         * 屏幕上任何地方都点不动。归零之后先保持穿透，等页面下一拍重新判定。
+         */
         alwaysIgnoreMouse = item.checked;
-        if (win && !win.isDestroyed()) win.setIgnoreMouseEvents(alwaysIgnoreMouse ? true : !interactive, { forward: true });
+        if (alwaysIgnoreMouse) interactive = false;
+        applyIgnore();
         status('alwaysIgnoreMouse=' + alwaysIgnoreMouse);
       },
     },
@@ -338,33 +409,67 @@ function buildMenu() {
  * 注册失败（被别的程序占用）时如实记状态，不静默。
  */
 function registerShortcuts() {
-  const wanted = HOTKEY;
-  try {
-    const ok = globalShortcut.register(wanted, () => {
-      status('hotkey fired: ' + wanted);
-      // 快捷键 = 唤出/收起她
-      if (!win || win.isDestroyed()) return;
-      if (win.isVisible()) { win.hide(); status('hidden by hotkey'); }
-      else { win.show(); status('shown by hotkey'); }
-    });
-    status('hotkey ' + wanted + ' = ' + (ok ? 'registered' : 'FAILED (可能被占用)'));
-  } catch (error) {
-    status('hotkey 注册抛错: ' + String(error && error.message ? error.message : error));
+  /**
+   * 依次尝试，第一个注册上的算数。
+   *
+   * **不能只试一个**：`Alt+Space` 在 Windows 上是窗口系统菜单键，很容易被别的程序
+   * 先占走（本机日志里六七次全是 `FAILED`）。而快捷键是「藏起来之后把她叫回来」的
+   * 通道之一——一个都注册不上，就只剩托盘一条路，托盘图标又是空白的话，她就回不来了。
+   */
+  const candidates = [HOTKEY, 'Ctrl+Alt+Space', 'Ctrl+Alt+P'].filter((v, i, a) => v && a.indexOf(v) === i);
+  const toggle = () => {
+    if (!win || win.isDestroyed()) return;
+    if (win.isVisible()) { win.hide(); status('hidden by hotkey'); }
+    else { win.show(); status('shown by hotkey'); }
+  };
+  for (const wanted of candidates) {
+    try {
+      const ok = globalShortcut.register(wanted, () => { status('hotkey fired: ' + wanted); toggle(); });
+      status('hotkey ' + wanted + ' = ' + (ok ? 'registered' : 'FAILED (可能被占用)'));
+      if (ok) return;
+    } catch (error) {
+      status('hotkey 注册抛错 ' + wanted + ': ' + String(error && error.message ? error.message : error));
+    }
   }
+  status('hotkey 全部落空——她藏起来之后只能从托盘唤回');
 }
 
 /* ---------- 托盘 ---------- */
 
-/** 建托盘图标（点它也能唤出/收起）。 */
+/**
+ * 建托盘图标（左键唤出/收起，右键弹菜单）。
+ *
+ * **图标必须是 PNG。** `nativeImage` 不认 SVG——`createFromPath('icon.svg')`
+ * 拿到的是空图像，`new Tray(createEmpty())` 在 Windows 上只留一个空白占位：
+ * 托盘和左键切换其实一直是好的，只是没人认得那个空格子就是她，藏起来之后
+ * 也就想不到去点它。`assets/tray.png` 是从 icon.svg 渲染出来的 32×32。
+ */
 function createTray() {
   try {
-    // 用她自己的图标；拿不到就退化成空图标（托盘仍可用）
-    const iconPath = path.join(PLUGIN_DIR, 'icon.svg');
-    const img = fs.existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty();
-    tray = new Tray(img.isEmpty() ? nativeImage.createEmpty() : img);
+    const candidates = [
+      path.join(PLUGIN_DIR, 'assets', 'tray.png'),
+      path.join(PLUGIN_DIR, 'icon.png'),
+    ];
+    let img = nativeImage.createEmpty();
+    for (const candidate of candidates) {
+      if (!fs.existsSync(candidate)) continue;
+      const next = nativeImage.createFromPath(candidate);
+      if (next.isEmpty()) continue;
+      img = next;
+      status('tray icon: ' + candidate);
+      break;
+    }
+    if (img.isEmpty()) status('tray icon 全部落空（托盘会只剩空白占位）');
+
+    tray = new Tray(img);
     tray.setToolTip('桌宠');
+    // 菜单是静态的，够用：唤出/收起由左键和快捷键负责，菜单只管「藏起来」和退出的入口
     tray.setContextMenu(buildMenu());
-    tray.on('click', () => { if (win && !win.isDestroyed()) { win.isVisible() ? win.hide() : win.show(); } });
+    tray.on('click', () => {
+      if (!win || win.isDestroyed()) return;
+      if (win.isVisible()) { win.hide(); status('hidden by tray click'); }
+      else { win.show(); status('shown by tray click'); }
+    });
     status('tray created');
   } catch (error) {
     status('tray 失败: ' + String(error && error.message ? error.message : error));
@@ -450,9 +555,17 @@ ipcMain.handle('pet:info', () => ({
 
 /* ---------- 启动 ---------- */
 
-// GPU 在这类环境里可能起不来；软件渲染下窗口照常显示（实测确认）
-app.commandLine.appendSwitch('use-gl', 'swiftshader');
-app.commandLine.appendSwitch('enable-unsafe-swiftshader');
+// 渲染后端：**默认软件渲染**，与历史行为保持一致。
+//
+// 无头/自动化环境（Edge headless、CI）没有真 GPU，必须用 SwiftShader 才能把 WebGL
+// 跑起来；但透明窗口每帧的合成与 DPI 重采样全压在 CPU 上，帧率、清晰度和输入延迟
+// 都要差一截。两种需求都存在，所以做成开关而不是写死：
+// 设置面板勾了「启用 GPU 渲染」时，桥会带 --gpu=1 拉起本进程，这里才不加软件渲染。
+const GPU_RENDER = process.argv.includes('--gpu=1');
+if (!GPU_RENDER) {
+  app.commandLine.appendSwitch('use-gl', 'swiftshader');
+  app.commandLine.appendSwitch('enable-unsafe-swiftshader');
+}
 
 app.whenReady().then(async () => {
   status('app ready bridge-port=' + (BRIDGE_PORT || 'none'));

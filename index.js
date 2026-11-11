@@ -369,8 +369,12 @@ export async function apply(ctx) {
   let desktopStatus = { at: 0, line: '' };
   /**
    * 独立窗口的偏好（由页面报来——它存在浏览器 localStorage，宿主读不到）。
+   *
+   * `gpu` 默认 false = 软件渲染，与历史行为一致：无头/自动化环境没有真 GPU，
+   * 走 CPU 才画得出来。真机桌面想要更高帧率与更锐利的边缘，由用户在设置面板
+   * 勾「启用 GPU 渲染」。
    */
-  let desktopPrefs = { enabled: false, hotkey: 'Alt+Space', electron: '' };
+  let desktopPrefs = { enabled: false, hotkey: 'Alt+Space', electron: '', gpu: false };
   /**
    * 桥接实例。
    *
@@ -776,13 +780,22 @@ export async function apply(ctx) {
          * 收到后：**按偏好决定要不要拉起独立窗口**。这是「启动时打开独立窗口」
          * 那个开关的实现——用户勾上，下次 DSH 一起来她就在桌面上。
          */
+        /**
+         * **`electron` 传空串时不覆盖宿主里已有的值。**
+         *
+         * 页面在 localStorage 没有这条时会照实上报空串——那一下就把宿主里
+         * 已经填好的路径冲掉了，用户看到的是「刚才还能打开，现在又 no-electron」。
+         * 路径没有「清空」这个需求，空串一律当没意见。
+         */
+        const incomingElectron = String(body.electron ?? '').slice(0, 500);
         desktopPrefs = {
           enabled: body.enabled === true,
           hotkey: String(body.hotkey ?? 'Alt+Space').slice(0, 60),
-          electron: String(body.electron ?? '').slice(0, 500),
+          electron: incomingElectron || desktopPrefs.electron,
+          gpu: body.gpu === true,
         };
         if (desktopBridge && desktopPrefs.enabled) {
-          const r = await desktopBridge.start({ electronPath: desktopPrefs.electron || process.env.DSH_COOPANION_ELECTRON, hotkey: desktopPrefs.hotkey });
+          const r = await desktopBridge.start({ electronPath: desktopPrefs.electron || process.env.DSH_COOPANION_ELECTRON, hotkey: desktopPrefs.hotkey, gpu: desktopPrefs.gpu });
           if (!r?.ok) {
             ctx.logger?.warn?.('dsh-coopanion-pet: 独立窗口没能启动：' + (r?.reason ?? 'unknown'));
           }
@@ -867,7 +880,15 @@ export async function apply(ctx) {
       handler: async (req, res) => {
         if (req.method !== 'POST') { res.writeHead(405); res.end(); return; }
         try {
-          const out = await desktop.start({ electronPath: process.env.DSH_COOPANION_ELECTRON });
+          /**
+           * **路径必须优先用面板里填的那份**（`desktopPrefs.electron`）。
+           *
+           * 只读环境变量的话，`link:` 安装拿不到 optionalDependencies、插件又不带
+           * 自带运行时，四个来源会同时落空 → `findElectron()` 返回 null →
+           * 面板上点「打开」只有一句 no-electron，窗口永远起不来。
+           * `desktop-prefs` 那条路径本来就是这么写的，这里对齐它。
+           */
+          const out = await desktop.start({ electronPath: desktopPrefs.electron || process.env.DSH_COOPANION_ELECTRON, gpu: desktopPrefs.gpu });
           res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
           res.end(JSON.stringify(out));
         } catch (error) {

@@ -127,12 +127,75 @@ function DesktopRow({ React: R, current, set }) {
     return () => clearInterval(timer);
   }, []);
 
+  /**
+   * 面板里改了偏好 → （节流半秒）推一份给宿主。
+   *
+   * **宿主内存里有一份 `desktopPrefs`，而页面只在装配时上报一次**（见 `client.js`
+   * 里那段 `desktop-prefs`）。不补这一步，改完 Electron 路径再点「打开」，
+   * 宿主用的还是旧值，`desktop-start` 会回 `no-electron`。改 GPU、改快捷键同理。
+   *
+   * 上报时 `enabled` 一律传 `false`：这一步只负责同步 electron / hotkey / gpu，
+   * 「启动时打开」由页面装配时那次上报负责——否则改个快捷键就会把窗口拉起来。
+   */
+  const pushedOnce = R.useRef(false);
+  R.useEffect(() => {
+    // 首次挂载不重报：页面装配时已经报过一份了
+    if (!pushedOnce.current) { pushedOnce.current = true; return undefined; }
+    const timer = setTimeout(() => {
+      fetch('/api/dsh-coopanion-pet/report', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          kind: 'desktop-prefs',
+          enabled: false,
+          hotkey: String(current.desktopHotkey ?? 'Alt+Space'),
+          electron: String(current.desktopElectron ?? ''),
+          gpu: current.desktopGpu === true,
+        }),
+      }).catch(() => { /* 宿主没开就算了，下次改动还会再推 */ });
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [current.desktopEnabled, current.desktopElectron, current.desktopHotkey, current.desktopGpu]);
+
   /** 打开/关闭独立窗口。 */
   const act = async (what) => {
-    setState((s) => ({ ...s, loading: true }));
+    setState((s) => ({ ...s, loading: true, error: '' }));
+    /**
+     * 失败原因要留到最后再写。
+     *
+     * `refresh()` 会按宿主回报的真实状态重建 state，其中 `error` 被清空——
+     * 所以这里先攒着，等 refresh 回来再补上，否则失败原因一秒就被冲掉。
+     */
+    let failure = '';
     try {
       if (what === 'start') {
-        await fetch('/api/dsh-coopanion-pet/desktop-start', { method: 'POST' });
+        /**
+         * **先把面板当前值推给宿主，再让它启动。**
+         *
+         * 宿主手里那份 `desktopPrefs` 只存在内存里，DSH 一重启就回到默认值
+         * （`gpu: false`、`electron: ''`），而页面只在装配时上报一次。所以直接点
+         * 「打开」很可能用一份过时的值起窗口——表现就是改过 GPU 开关、关掉再打开，
+         * 又退回软件渲染。
+         *
+         * 这一次不节流，并带上真实的 `enabled`：宿主若据此自动拉起，随后的
+         * `desktop-start` 会拿到 `already: true`，不会开出第二个窗口。
+         */
+        await fetch('/api/dsh-coopanion-pet/report', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            kind: 'desktop-prefs',
+            enabled: current.desktopEnabled !== false,
+            hotkey: String(current.desktopHotkey ?? 'Alt+Space'),
+            electron: String(current.desktopElectron ?? ''),
+            gpu: current.desktopGpu === true,
+          }),
+        }).catch(() => { /* 推不上去就只能用宿主手里那份 */ });
+        /**
+         * **必须读返回值。** 宿主失败时回的是 200 + `{ ok:false, reason:'no-electron' }`，
+         * 不看 body 的话界面只会从「检查中」退回「未运行」，用户拿不到任何线索。
+         */
+        const res = await fetch('/api/dsh-coopanion-pet/desktop-start', { method: 'POST' });
+        const out = await res.json().catch(() => null);
+        if (out && out.ok === false) failure = String(out.reason ?? 'unknown');
       } else {
         // 关闭：让宿主停掉 bridge（它会连带杀掉 Electron 进程树）
         await fetch('/api/dsh-coopanion-pet/report', {
@@ -140,12 +203,14 @@ function DesktopRow({ React: R, current, set }) {
           body: JSON.stringify({ kind: 'desktop-stop' }),
         });
       }
-    } catch (error) { /* 下面的 refresh 会反映真实状态 */ }
+    } catch (error) { failure = String(error?.message ?? error); }
     await new Promise((r) => setTimeout(r, 1500));
     await refresh();
+    if (failure) setState((s) => ({ ...s, error: failure }));
   };
 
   const enabled = current.desktopEnabled !== false;
+  const gpuOn = current.desktopGpu === true;
   const statusText = state.loading
     ? t('settings.speechLoading')
     : (state.running ? t('settings.desktopRunning') : t('settings.desktopStopped'))
@@ -210,6 +275,18 @@ function DesktopRow({ React: R, current, set }) {
         style: { font: 'inherit', fontSize: '12.5px', width: '200px', padding: '4px 8px', textAlign: 'right', border: '1px solid var(--dsw-alias-border-l2, #E2DFE8)', borderRadius: '8px', background: 'transparent', color: 'inherit' },
         onChange: (e) => set({ desktopElectron: e.target.value }),
       }),
+    ]),
+    // GPU 渲染（默认关＝软件渲染，与历史行为一致）
+    h('label', { key: 'gpu', style: ROW }, [
+      h('span', { key: 't', style: { display: 'flex', flexDirection: 'column', gap: '2px' } }, [
+        h('span', { key: 'l' }, t('settings.desktopGpu')),
+        h('span', { key: 'h', style: HINT }, t('settings.desktopGpuHint')),
+      ]),
+      h('button', {
+        key: 'b', type: 'button', role: 'switch', 'aria-checked': gpuOn, 'aria-label': t('settings.desktopGpu'),
+        style: { font: 'inherit', fontSize: '12.5px', padding: '4px 12px', cursor: 'pointer', border: '1px solid var(--dsw-alias-border-l2, #E2DFE8)', borderRadius: '8px', background: gpuOn ? 'var(--dsw-static-accent, #4da3ff)' : 'transparent', color: gpuOn ? '#fff' : 'inherit' },
+        onClick: (e) => { e.preventDefault(); e.stopPropagation(); set({ desktopGpu: !gpuOn }); },
+      }, gpuOn ? '开' : '关'),
     ]),
   ]);
 }
@@ -573,12 +650,25 @@ export function createSettingsSection(React, prefs) {
     const choice = (key, label, options, values, hint) => {
       const list = values ?? options.map((_, i) => i);
       const at = list.indexOf(current[key]);
-      return h('div', { key, style: ROW }, [
-        h('span', { key: 'l', style: { display: 'flex', flexDirection: 'column', gap: '2px' } }, [
+      return h('div', { key, style: { ...ROW, flexWrap: 'wrap' } }, [
+        /**
+         * 左列要有保底宽度。
+         *
+         * 原来没有 flex-basis（默认 `0 1 auto`），右侧按钮组一宽就把这一列压到
+         * 只剩一个字宽——中文可以逐字断行，于是「语言」两个字就这么竖排了。
+         */
+        h('span', { key: 'l', style: { display: 'flex', flexDirection: 'column', gap: '2px', flex: '1 1 140px', minWidth: 0 } }, [
           h('span', { key: 'n' }, label),
           hint ? h('span', { key: 'h', style: HINT }, hint) : null,
         ]),
-        h('span', { key: 'g', style: { display: 'flex', flex: 'none', gap: '4px', flexWrap: 'wrap', justifyContent: 'flex-end' } },
+        /**
+         * 右侧用 `1 1 auto` 而不是原来的 `none`。
+         *
+         * `none` = `0 0 auto`，宽度等于**一整行内容宽度**：既不收缩，
+         * `flexWrap` 也就没有可换行的余地，多出来的按钮直接溢出被裁掉。
+         * 给它一个可伸缩的 basis，才谈得上「自适应多行」。
+         */
+        h('span', { key: 'g', style: { display: 'flex', flex: '1 1 auto', gap: '4px', flexWrap: 'wrap', justifyContent: 'flex-end', minWidth: 0 } },
           options.map((name, i) => h('button', {
             key: name,
             type: 'button',

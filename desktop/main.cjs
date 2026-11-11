@@ -382,33 +382,67 @@ function buildMenu() {
  * 注册失败（被别的程序占用）时如实记状态，不静默。
  */
 function registerShortcuts() {
-  const wanted = HOTKEY;
-  try {
-    const ok = globalShortcut.register(wanted, () => {
-      status('hotkey fired: ' + wanted);
-      // 快捷键 = 唤出/收起她
-      if (!win || win.isDestroyed()) return;
-      if (win.isVisible()) { win.hide(); status('hidden by hotkey'); }
-      else { win.show(); status('shown by hotkey'); }
-    });
-    status('hotkey ' + wanted + ' = ' + (ok ? 'registered' : 'FAILED (可能被占用)'));
-  } catch (error) {
-    status('hotkey 注册抛错: ' + String(error && error.message ? error.message : error));
+  /**
+   * 依次尝试，第一个注册上的算数。
+   *
+   * **不能只试一个**：`Alt+Space` 在 Windows 上是窗口系统菜单键，很容易被别的程序
+   * 先占走（本机日志里六七次全是 `FAILED`）。而快捷键是「藏起来之后把她叫回来」的
+   * 通道之一——一个都注册不上，就只剩托盘一条路，托盘图标又是空白的话，她就回不来了。
+   */
+  const candidates = [HOTKEY, 'Ctrl+Alt+Space', 'Ctrl+Alt+P'].filter((v, i, a) => v && a.indexOf(v) === i);
+  const toggle = () => {
+    if (!win || win.isDestroyed()) return;
+    if (win.isVisible()) { win.hide(); status('hidden by hotkey'); }
+    else { win.show(); status('shown by hotkey'); }
+  };
+  for (const wanted of candidates) {
+    try {
+      const ok = globalShortcut.register(wanted, () => { status('hotkey fired: ' + wanted); toggle(); });
+      status('hotkey ' + wanted + ' = ' + (ok ? 'registered' : 'FAILED (可能被占用)'));
+      if (ok) return;
+    } catch (error) {
+      status('hotkey 注册抛错 ' + wanted + ': ' + String(error && error.message ? error.message : error));
+    }
   }
+  status('hotkey 全部落空——她藏起来之后只能从托盘唤回');
 }
 
 /* ---------- 托盘 ---------- */
 
-/** 建托盘图标（点它也能唤出/收起）。 */
+/**
+ * 建托盘图标（左键唤出/收起，右键弹菜单）。
+ *
+ * **图标必须是 PNG。** `nativeImage` 不认 SVG——`createFromPath('icon.svg')`
+ * 拿到的是空图像，`new Tray(createEmpty())` 在 Windows 上只留一个空白占位：
+ * 托盘和左键切换其实一直是好的，只是没人认得那个空格子就是她，藏起来之后
+ * 也就想不到去点它。`assets/tray.png` 是从 icon.svg 渲染出来的 32×32。
+ */
 function createTray() {
   try {
-    // 用她自己的图标；拿不到就退化成空图标（托盘仍可用）
-    const iconPath = path.join(PLUGIN_DIR, 'icon.svg');
-    const img = fs.existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty();
-    tray = new Tray(img.isEmpty() ? nativeImage.createEmpty() : img);
+    const candidates = [
+      path.join(PLUGIN_DIR, 'assets', 'tray.png'),
+      path.join(PLUGIN_DIR, 'icon.png'),
+    ];
+    let img = nativeImage.createEmpty();
+    for (const candidate of candidates) {
+      if (!fs.existsSync(candidate)) continue;
+      const next = nativeImage.createFromPath(candidate);
+      if (next.isEmpty()) continue;
+      img = next;
+      status('tray icon: ' + candidate);
+      break;
+    }
+    if (img.isEmpty()) status('tray icon 全部落空（托盘会只剩空白占位）');
+
+    tray = new Tray(img);
     tray.setToolTip('桌宠');
+    // 菜单是静态的，够用：唤出/收起由左键和快捷键负责，菜单只管「藏起来」和退出的入口
     tray.setContextMenu(buildMenu());
-    tray.on('click', () => { if (win && !win.isDestroyed()) { win.isVisible() ? win.hide() : win.show(); } });
+    tray.on('click', () => {
+      if (!win || win.isDestroyed()) return;
+      if (win.isVisible()) { win.hide(); status('hidden by tray click'); }
+      else { win.show(); status('shown by tray click'); }
+    });
     status('tray created');
   } catch (error) {
     status('tray 失败: ' + String(error && error.message ? error.message : error));

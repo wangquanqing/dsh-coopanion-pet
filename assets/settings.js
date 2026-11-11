@@ -146,6 +146,7 @@ function DesktopRow({ React: R, current, set }) {
   };
 
   const enabled = current.desktopEnabled !== false;
+  const gpuOn = current.desktopGpu === true;
   const statusText = state.loading
     ? t('settings.speechLoading')
     : (state.running ? t('settings.desktopRunning') : t('settings.desktopStopped'))
@@ -210,6 +211,18 @@ function DesktopRow({ React: R, current, set }) {
         style: { font: 'inherit', fontSize: '12.5px', width: '200px', padding: '4px 8px', textAlign: 'right', border: '1px solid var(--dsw-alias-border-l2, #E2DFE8)', borderRadius: '8px', background: 'transparent', color: 'inherit' },
         onChange: (e) => set({ desktopElectron: e.target.value }),
       }),
+    ]),
+    // GPU 渲染（默认关＝软件渲染，与历史行为一致）
+    h('label', { key: 'gpu', style: ROW }, [
+      h('span', { key: 't', style: { display: 'flex', flexDirection: 'column', gap: '2px' } }, [
+        h('span', { key: 'l' }, t('settings.desktopGpu')),
+        h('span', { key: 'h', style: HINT }, t('settings.desktopGpuHint')),
+      ]),
+      h('button', {
+        key: 'b', type: 'button', role: 'switch', 'aria-checked': gpuOn, 'aria-label': t('settings.desktopGpu'),
+        style: { font: 'inherit', fontSize: '12.5px', padding: '4px 12px', cursor: 'pointer', border: '1px solid var(--dsw-alias-border-l2, #E2DFE8)', borderRadius: '8px', background: gpuOn ? 'var(--dsw-static-accent, #4da3ff)' : 'transparent', color: gpuOn ? '#fff' : 'inherit' },
+        onClick: (e) => { e.preventDefault(); e.stopPropagation(); set({ desktopGpu: !gpuOn }); },
+      }, gpuOn ? '开' : '关'),
     ]),
   ]);
 }

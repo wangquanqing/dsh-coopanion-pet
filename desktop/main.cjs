@@ -450,9 +450,17 @@ ipcMain.handle('pet:info', () => ({
 
 /* ---------- 启动 ---------- */
 
-// GPU 在这类环境里可能起不来；软件渲染下窗口照常显示（实测确认）
-app.commandLine.appendSwitch('use-gl', 'swiftshader');
-app.commandLine.appendSwitch('enable-unsafe-swiftshader');
+// 渲染后端：**默认软件渲染**，与历史行为保持一致。
+//
+// 无头/自动化环境（Edge headless、CI）没有真 GPU，必须用 SwiftShader 才能把 WebGL
+// 跑起来；但透明窗口每帧的合成与 DPI 重采样全压在 CPU 上，帧率、清晰度和输入延迟
+// 都要差一截。两种需求都存在，所以做成开关而不是写死：
+// 设置面板勾了「启用 GPU 渲染」时，桥会带 --gpu=1 拉起本进程，这里才不加软件渲染。
+const GPU_RENDER = process.argv.includes('--gpu=1');
+if (!GPU_RENDER) {
+  app.commandLine.appendSwitch('use-gl', 'swiftshader');
+  app.commandLine.appendSwitch('enable-unsafe-swiftshader');
+}
 
 app.whenReady().then(async () => {
   status('app ready bridge-port=' + (BRIDGE_PORT || 'none'));

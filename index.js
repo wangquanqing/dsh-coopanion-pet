@@ -369,8 +369,12 @@ export async function apply(ctx) {
   let desktopStatus = { at: 0, line: '' };
   /**
    * 独立窗口的偏好（由页面报来——它存在浏览器 localStorage，宿主读不到）。
+   *
+   * `gpu` 默认 false = 软件渲染，与历史行为一致：无头/自动化环境没有真 GPU，
+   * 走 CPU 才画得出来。真机桌面想要更高帧率与更锐利的边缘，由用户在设置面板
+   * 勾「启用 GPU 渲染」。
    */
-  let desktopPrefs = { enabled: false, hotkey: 'Alt+Space', electron: '' };
+  let desktopPrefs = { enabled: false, hotkey: 'Alt+Space', electron: '', gpu: false };
   /**
    * 桥接实例。
    *
@@ -780,9 +784,10 @@ export async function apply(ctx) {
           enabled: body.enabled === true,
           hotkey: String(body.hotkey ?? 'Alt+Space').slice(0, 60),
           electron: String(body.electron ?? '').slice(0, 500),
+          gpu: body.gpu === true,
         };
         if (desktopBridge && desktopPrefs.enabled) {
-          const r = await desktopBridge.start({ electronPath: desktopPrefs.electron || process.env.DSH_COOPANION_ELECTRON, hotkey: desktopPrefs.hotkey });
+          const r = await desktopBridge.start({ electronPath: desktopPrefs.electron || process.env.DSH_COOPANION_ELECTRON, hotkey: desktopPrefs.hotkey, gpu: desktopPrefs.gpu });
           if (!r?.ok) {
             ctx.logger?.warn?.('dsh-coopanion-pet: 独立窗口没能启动：' + (r?.reason ?? 'unknown'));
           }
@@ -867,7 +872,7 @@ export async function apply(ctx) {
       handler: async (req, res) => {
         if (req.method !== 'POST') { res.writeHead(405); res.end(); return; }
         try {
-          const out = await desktop.start({ electronPath: process.env.DSH_COOPANION_ELECTRON });
+          const out = await desktop.start({ electronPath: process.env.DSH_COOPANION_ELECTRON, gpu: desktopPrefs.gpu });
           res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
           res.end(JSON.stringify(out));
         } catch (error) {

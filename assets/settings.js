@@ -127,12 +127,54 @@ function DesktopRow({ React: R, current, set }) {
     return () => clearInterval(timer);
   }, []);
 
+  /**
+   * 面板里改了偏好 → （节流半秒）推一份给宿主。
+   *
+   * **宿主内存里有一份 `desktopPrefs`，而页面只在装配时上报一次**（见 `client.js`
+   * 里那段 `desktop-prefs`）。不补这一步，改完 Electron 路径再点「打开」，
+   * 宿主用的还是旧值，`desktop-start` 会回 `no-electron`。改 GPU、改快捷键同理。
+   *
+   * 上报时 `enabled` 一律传 `false`：这一步只负责同步 electron / hotkey / gpu，
+   * 「启动时打开」由页面装配时那次上报负责——否则改个快捷键就会把窗口拉起来。
+   */
+  const pushedOnce = R.useRef(false);
+  R.useEffect(() => {
+    // 首次挂载不重报：页面装配时已经报过一份了
+    if (!pushedOnce.current) { pushedOnce.current = true; return undefined; }
+    const timer = setTimeout(() => {
+      fetch('/api/dsh-coopanion-pet/report', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          kind: 'desktop-prefs',
+          enabled: false,
+          hotkey: String(current.desktopHotkey ?? 'Alt+Space'),
+          electron: String(current.desktopElectron ?? ''),
+          gpu: current.desktopGpu === true,
+        }),
+      }).catch(() => { /* 宿主没开就算了，下次改动还会再推 */ });
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [current.desktopEnabled, current.desktopElectron, current.desktopHotkey, current.desktopGpu]);
+
   /** 打开/关闭独立窗口。 */
   const act = async (what) => {
-    setState((s) => ({ ...s, loading: true }));
+    setState((s) => ({ ...s, loading: true, error: '' }));
+    /**
+     * 失败原因要留到最后再写。
+     *
+     * `refresh()` 会按宿主回报的真实状态重建 state，其中 `error` 被清空——
+     * 所以这里先攒着，等 refresh 回来再补上，否则失败原因一秒就被冲掉。
+     */
+    let failure = '';
     try {
       if (what === 'start') {
-        await fetch('/api/dsh-coopanion-pet/desktop-start', { method: 'POST' });
+        /**
+         * **必须读返回值。** 宿主失败时回的是 200 + `{ ok:false, reason:'no-electron' }`，
+         * 不看 body 的话界面只会从「检查中」退回「未运行」，用户拿不到任何线索。
+         */
+        const res = await fetch('/api/dsh-coopanion-pet/desktop-start', { method: 'POST' });
+        const out = await res.json().catch(() => null);
+        if (out && out.ok === false) failure = String(out.reason ?? 'unknown');
       } else {
         // 关闭：让宿主停掉 bridge（它会连带杀掉 Electron 进程树）
         await fetch('/api/dsh-coopanion-pet/report', {
@@ -140,9 +182,10 @@ function DesktopRow({ React: R, current, set }) {
           body: JSON.stringify({ kind: 'desktop-stop' }),
         });
       }
-    } catch (error) { /* 下面的 refresh 会反映真实状态 */ }
+    } catch (error) { failure = String(error?.message ?? error); }
     await new Promise((r) => setTimeout(r, 1500));
     await refresh();
+    if (failure) setState((s) => ({ ...s, error: failure }));
   };
 
   const enabled = current.desktopEnabled !== false;

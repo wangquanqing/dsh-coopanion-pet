@@ -29,6 +29,12 @@ contextBridge.exposeInMainWorld('dshPetDesktop', {
     ipcRenderer.on('pet:command', listener);
     return () => { try { ipcRenderer.removeListener('pet:command', listener); } catch (error) { /* 忽略 */ } };
   },
+  /** 主进程要求重新判定一次「光标在不在她身上」（窗口重新显示时会用）。 */
+  onRecheck: (fn) => {
+    const listener = () => { try { fn(); } catch (error) { /* 页面自己的问题 */ } };
+    ipcRenderer.on('pet:recheck', listener);
+    return () => { try { ipcRenderer.removeListener('pet:recheck', listener); } catch (error) { /* 忽略 */ } };
+  },
   /** 这是独立窗口（页面据此显示「切回 DSH」之类的入口）。 */
   standalone: true,
 });

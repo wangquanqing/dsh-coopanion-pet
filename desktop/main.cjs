@@ -296,10 +296,37 @@ async function createWindow(port) {
      * 就是它在抢——用户主动点她、或用托盘/快捷键唤出时，才需要真的聚焦。
      */
     win.showInactive();
-    status('window shown visible=' + win.isVisible() + ' alwaysOnTop=' + win.isAlwaysOnTop()
+    status('window ready visible=' + win.isVisible() + ' alwaysOnTop=' + win.isAlwaysOnTop()
       + ' bounds=' + JSON.stringify(win.getBounds()));
   });
   win.webContents.on('did-finish-load', () => status('page loaded'));
+  /**
+   * 可见性一变，就把「接不接鼠标」重新落一遍。
+   *
+   * `applyIgnore()` 平时只在页面报消息时跑。窗口藏起来那段时间页面收不到鼠标
+   * 事件，「光标在她身上」的判断就停在藏起来之前那一刻；放回来时若还照那个值走，
+   * 两边可能对不上——表现就是藏一次再叫回来，点她没反应。
+   *
+   * 藏起来时先把 `interactive` 归零：窗口都不在了，谈不上「在她身上」。
+   * 放回来从穿透起步，等页面重新报一次再决定。
+   */
+  win.on('show', () => {
+    applyIgnore();
+    /**
+     * 放回来时戳页面一下，让它重新报一次「光标在不在她身上」。
+     *
+     * 藏起来时主进程把 `interactive` 归零了，页面那边的 `lastOn` 却还停在藏起来
+     * 之前的值——放回来它算出来仍是「在她身上」，和 `lastOn` 相等就不发消息，
+     * 两边从此差一拍：主进程认为穿透，页面以为早就说过。这一戳是为了把两头对齐。
+     */
+    try { win.webContents.send('pet:recheck'); } catch (error) { /* 页面还没就绪就算了 */ }
+    status('window shown');
+  });
+  win.on('hide', () => {
+    interactive = false;
+    applyIgnore();
+    status('window hidden');
+  });
   // 窗口失焦时也保持置顶与穿透判定正确
   win.on('blur', () => status('window blur'));
   win.on('focus', () => status('window focus'));

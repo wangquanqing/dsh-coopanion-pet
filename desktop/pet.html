@@ -78,13 +78,28 @@ function pointerOverUi(x, y) {
   return false;
 }
 
+/**
+ * 按最后一次已知的光标位置，重算「在不在她身上」。
+ *
+ * `__dshPetPointerOn` 只在 `mousemove` 时更新。窗口藏起来那段时间收不到事件，
+ * 放回来时光标往往没动过——只等下一次移动，窗口会一直留在穿透状态，点她没反应。
+ */
+function recomputeHit() {
+  const api = window.__dshCoopanionPet;
+  const p = window.__dshPetPointer;
+  if (!api || !p) return;
+  const hits = api.hits ?? [];
+  window.__dshPetPointerOn = hits.some((c) => Math.hypot(p.x - c.x, p.y - c.y) < c.r);
+}
+
 let lastOn = null;
 function reportInteractive() {
   const api = window.__dshCoopanionPet;
   if (!api) return;
   // 她的命中圆（内核回报）+ 光标真的压在某块界面上
   const p = window.__dshPetPointer || { x: -1, y: -1 };
-  const on = !!(window.__dshPetPointerOn || pointerOverUi(p.x, p.y));
+  const hoverUi = pointerOverUi(p.x, p.y);
+  const on = !!(window.__dshPetPointerOn || hoverUi);
   if (on === lastOn) return;
   lastOn = on;
   try { window.dshPetDesktop?.setInteractive(on); } catch (error) { /* 桥不在就算了 */ }
@@ -93,6 +108,34 @@ function reportInteractive() {
 // 每秒看几次即可（判定很轻），避免每帧都发 IPC
 setInterval(reportInteractive, 120);
 document.addEventListener('mousemove', () => { setTimeout(reportInteractive, 0); }, true);
+
+/**
+ * 窗口重新可见时先对一次：重算命中，再强制上报一拍。
+ *
+ * `lastOn` 归 null 是为了让 `reportInteractive` 一定发出去——它平时只在值变化时
+ * 发，而这里要的正是「按现在的真实状态重报一次」。
+ */
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  recomputeHit();
+  lastOn = null;
+  reportInteractive();
+});
+
+/**
+ * 主进程把窗口放回来时会戳一下这里：重算命中，再强制重报。
+ *
+ * **不靠 `visibilitychange`**：Electron 窗口从 hide 到 show，页面的 `visibilityState`
+ * 不一定翻转，这个事件在这里靠不住——藏起来时主进程已经把「可交互」归零了，
+ * 页面若还以为自己早就报过，两头就永远差一拍。
+ */
+try {
+  window.dshPetDesktop?.onRecheck?.(() => {
+    recomputeHit();
+    lastOn = null;
+    reportInteractive();
+  });
+} catch (error) { /* 桥不在就算了 */ }
 
 /**
  * 在她身上右键 → 弹独立窗口自己的菜单。
